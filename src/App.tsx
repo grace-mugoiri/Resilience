@@ -1,7 +1,14 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
+
+const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
+const Onboarding = lazy(() => import('./onboarding/Onboarding'))
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [installed, setInstalled] = useState(
+    window.matchMedia('(display-mode: standalone)').matches,
+  )
 
   useEffect(() => {
     const updateStatus = () => setOnline(navigator.onLine)
@@ -13,6 +20,41 @@ function App() {
       window.removeEventListener('offline', updateStatus)
     }
   }, [])
+
+  useEffect(() => {
+    const saveInstallPrompt = (event: BeforeInstallPromptEvent) => {
+      event.preventDefault()
+      setInstallPrompt(event)
+    }
+    const handleInstalled = () => {
+      setInstallPrompt(null)
+      setInstalled(true)
+    }
+
+    window.addEventListener('beforeinstallprompt', saveInstallPrompt)
+    window.addEventListener('appinstalled', handleInstalled)
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', saveInstallPrompt)
+      window.removeEventListener('appinstalled', handleInstalled)
+    }
+  }, [])
+
+  const installApp = async () => {
+    if (!installPrompt) return
+
+    await installPrompt.prompt()
+    await installPrompt.userChoice
+    setInstallPrompt(null)
+  }
+
+  if (isOnboardingRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Onboarding />
+      </Suspense>
+    )
+  }
 
   return (
     <main className="app-shell">
@@ -36,7 +78,16 @@ function App() {
         </p>
         <div className="actions">
           <a className="primary-action" href="#features">Explore the foundation</a>
-          <span className="install-hint">Install it from your browser menu</span>
+          {installPrompt && !installed ? (
+            <button className="install-action" type="button" onClick={installApp}>
+              <span aria-hidden="true">↓</span>
+              Install App
+            </button>
+          ) : (
+            <span className="install-hint">
+              {installed ? 'Installed on this device' : 'Install it from your browser menu'}
+            </span>
+          )}
         </div>
       </section>
 

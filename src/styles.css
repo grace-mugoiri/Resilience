@@ -13,6 +13,8 @@ html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 a { color: inherit; }
 
+.onboarding-loading { min-height: 100vh; display: grid; place-items: center; color: #683f9f; background: #faf8fd; }
+
 .app-shell {
   min-height: 100vh;
   padding: 0 clamp(1.25rem, 5vw, 5rem) 4rem;
@@ -42,6 +44,9 @@ h1 { max-width: 56rem; margin: 0; font-family: 'DM Serif Display', serif; font-s
 .intro { max-width: 41rem; margin: 2rem 0 0; color: #c7d2cc; font-size: clamp(1.05rem, 2vw, 1.3rem); line-height: 1.7; }
 .actions { display: flex; flex-wrap: wrap; gap: 1.25rem 1.75rem; align-items: center; margin-top: 2.5rem; }
 .primary-action { display: inline-block; padding: 0.9rem 1.25rem; border-radius: 999px; color: #10231f; background: #f0b868; font-weight: 700; text-decoration: none; }
+.install-action { display: inline-flex; gap: 0.55rem; align-items: center; padding: 0.82rem 1.2rem; border: 1px solid rgba(247, 244, 234, 0.35); border-radius: 999px; color: #f7f4ea; background: transparent; font: inherit; font-weight: 700; cursor: pointer; transition: border-color 160ms ease, background 160ms ease, transform 160ms ease; }
+.install-action:hover { border-color: #f0b868; background: rgba(240, 184, 104, 0.1); transform: translateY(-1px); }
+.install-action:focus-visible, .primary-action:focus-visible { outline: 3px solid #8dd4ac; outline-offset: 3px; }
 .install-hint { color: #91a69c; font-size: 0.88rem; }
 
 .features { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid rgba(247, 244, 234, 0.14); }
