@@ -73,8 +73,7 @@ function App() {
         <p className="eyebrow">Ready wherever you are</p>
         <h1>A resilient app starts with a resilient foundation.</h1>
         <p className="intro">
-          This React and TypeScript PWA is installable, responsive, and available
-          even when the network is not.
+          A privacy-first, pseudonymous support platform for survivors of gender-based violence — peer support groups, verified-by-external-org counselors, private messaging, selectively-shared health notes, and Bitcoin-based support ("zaps"), built as a responsive web app.
         </p>
         <div className="actions">
           <a className="primary-action" href="#features">Explore the foundation</a>
