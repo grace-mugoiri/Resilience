@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 
 const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
+const isHomeRoute = window.location.pathname.startsWith('/app')
 const Onboarding = lazy(() => import('./onboarding/Onboarding'))
+const Home = lazy(() => import('./home/Home'))
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
@@ -52,6 +54,14 @@ function App() {
     return (
       <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
         <Onboarding />
+      </Suspense>
+    )
+  }
+
+  if (isHomeRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Home />
       </Suspense>
     )
   }
