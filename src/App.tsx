@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 
 const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
+const isGroupsRoute = window.location.pathname.startsWith('/app/groups')
 const isSupportRoute = window.location.pathname.startsWith('/app/counselors') || window.location.pathname.startsWith('/app/chat') || window.location.pathname.startsWith('/app/report')
 const isHomeRoute = window.location.pathname.startsWith('/app')
 const Onboarding = lazy(() => import('./onboarding/Onboarding'))
 const Home = lazy(() => import('./home/Home'))
 const Support = lazy(() => import('./support/Support'))
+const Groups = lazy(() => import('./groups/Groups'))
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
@@ -56,6 +58,14 @@ function App() {
     return (
       <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
         <Onboarding />
+      </Suspense>
+    )
+  }
+
+  if (isGroupsRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Groups />
       </Suspense>
     )
   }
