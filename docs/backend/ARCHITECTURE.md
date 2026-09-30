@@ -4,9 +4,8 @@ only where it touches the API or the relay.
 
 ## 1. The one rule
 
-The backend helps, but it is never where the sensitive things live. If the server were seized
-tomorrow, or served with a court order, it should hold nothing that identifies a survivor or
-reveals what she said.
+The backend helps, but it is never where the sensitive things live. If the server were seized or
+served with a court order, it should hold nothing that identifies a survivor or reveals what she said.
 
 The backend must never:
 
@@ -153,12 +152,12 @@ How it works in the code:
    website's bad hour does not take an organisation offline.
 
 Not built yet: the worker pulling rosters from the relay by itself (the dashboard sends them to
-the API today), and the platform-signed approved-orgs list for clients to verify.
+the API), and the platform-signed approved-orgs list for clients to verify.
 
 ### 5.4 Disbursements: emergency money (next)
 
-The counsellor sends a survivor a small amount (for example KSh 500 for transport). The backend
-records it and proves it was paid. It never touches the money.
+The counsellor sends emergency assistance to a survivor. The backend records the disbursement and
+verifies proof of payment. It never holds or transfers the money.
 
 1. The counsellor creates a disbursement. State `CREATED`.
 2. The survivor's wallet makes a Lightning invoice and sends it back **in the chat**.
@@ -252,7 +251,7 @@ What is absent is the point: no survivor table, no message table, no IP column, 
 |---|---|---|
 | Purge replay-guard ids older than 2 × the NIP-98 window | 1 min | built |
 | NIP-05 re-check; suspend orgs whose domain no longer vouches for their key | 6 h | built |
-| Roster sync from the relay, verify, index | 5 min | next (the API accepts rosters today) |
+| Roster sync from the relay, verify, index | 5 min | planned (the API accepts signed rosters) |
 | Disbursement expiry, delete final invoice strings | 1 min | next |
 
 ## 9. Deployment
@@ -278,7 +277,7 @@ What is absent is the point: no survivor table, no message table, no IP column, 
 | Someone else reads her messages | NIP-44 encryption inside NIP-17 gift wraps, and `nip42_dms`. |
 | Logs link a person to a key | Access logs off, relay at warn level, no IP header forwarding. |
 
-Health records (the old Epic 4) are out of scope for the demo. They would be the riskiest data
+Health records are out of scope for the current implementation. They would be the riskiest data
 in the system, and a record encrypted with a key that dies when the tab closes can never be
 reopened.
 
@@ -307,15 +306,3 @@ Built so far (100 tests, all passing, about 3 seconds):
 Next, with disbursements: idempotency, illegal transitions, two simultaneous `proof` calls give
 exactly one `PAID`, and a hypothesis test over random call sequences with two invariants: never
 `PAID` twice, and an organisation's daily total never above its cap.
-
-## 12. Plan to Demo Day
-
-| Day | Backend |
-|---|---|
-| Mon 28 | Scaffold, schema, NIP-98, signed config, CORS, CI (done on `feature/backend-setup`) |
-| Tue 29 | Organisations, NIP-05 check, roster intake, directory endpoints (done) |
-| Wed 30 | Disbursement state machine, idempotency, mock provider, property test. Deploy with Caddy. |
-| Thu 1 Oct | Invoice decoding, preimage proof, one real payment from the dashboard to a Breez wallet |
-| Fri 2 | Logging and purge hardening, threat model write-up |
-| Sat 3 | Full rehearsal with the web client |
-| Sun 4 | Code freeze, README, project PR into `hack-4-freedom/nairobi-2026/projects` |
