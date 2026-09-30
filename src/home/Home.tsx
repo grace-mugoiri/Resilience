@@ -53,6 +53,8 @@ export default function Home() {
   const selectCard = (feature?: ProtectedFeature, title?: string) => {
     if (title === 'Talk to someone') {
       window.location.assign(`/app/counselors${guest ? '?mode=guest' : ''}`)
+    } else if (title === 'My circle' && !guest) {
+      window.location.assign('/app/circle')
     } else if (guest && feature) {
       setProtectedFeature(feature)
     }
