@@ -14,7 +14,7 @@ const go = (path: string) => window.location.assign(path)
 function Header({ title, back, menu }: { title: string; back: () => void; menu?: () => void }) {
   return <header className="circle-header"><button className="circle-back" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button><strong>{title}</strong>{menu && <button className="circle-more" onClick={menu} aria-label="Open member menu"><Icon name="more" size={19} /></button>}<button className="circle-exit" onClick={() => window.location.replace('/')}><Icon name="exit" size={17} />Exit</button></header>
 }
-function Nav({ active = 'home' }: { active?: 'home' | 'messages' }) { return <nav className="circle-nav"><a className={active === 'home' ? 'active' : ''} href="/app"><Icon name="home" /><span>Home</span></a><button className={active === 'messages' ? 'active' : ''}><Icon name="chat" /><span>Messages</span></button><button><Icon name="wallet" /><span>Wallet</span></button><button><Icon name="settings" /><span>Settings</span></button></nav> }
+function Nav({ active = 'home' }: { active?: 'home' | 'messages' }) { return <nav className="circle-nav"><a className={active === 'home' ? 'active' : ''} href="/app"><Icon name="home" /><span>Home</span></a><a className={active === 'messages' ? 'active' : ''} href="/app/messages"><Icon name="chat" /><span>Messages</span></a><a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a><a href="/app/settings"><Icon name="settings" /><span>Settings</span></a></nav> }
 
 function CircleHome() {
   const pending = sessionStorage.getItem('circle-pending-invite')
