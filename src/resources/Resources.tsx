@@ -14,7 +14,7 @@ const guest = () => new URLSearchParams(window.location.search).get('mode') === 
 const withMode = (path: string) => `${path}${guest() ? `${path.includes('?') ? '&' : '?'}mode=guest` : ''}`
 const go = (path: string) => window.location.assign(withMode(path))
 function Exit() { return <button className="resources-exit" onClick={() => window.location.replace('/')}><Icon name="exit" size={17} />Exit</button> }
-function Header({ title, back }: { title: string; back?: () => void }) { return <header className="resources-header">{back && <button className="resources-back" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button>}<h1>{title}</h1><Exit /></header> }
+function Header({ title, back }: { title: string; back?: () => void }) { return <header className="resources-header"><button className="resources-back" onClick={back ?? (() => go('/app'))} aria-label="Go back"><Icon name="back" size={18} /></button><h1>{title}</h1><Exit /></header> }
 function Nav() { return <nav className="resources-nav"><a className="active" href={withMode('/app')}><Icon name="home" /><span>Home</span></a><button><Icon name="chat" /><span>Messages</span></button><button><Icon name="wallet" /><span>Wallet</span></button><button><Icon name="settings" /><span>Settings</span></button></nav> }
 function Help() { return <button className="resources-help" onClick={() => window.location.assign('/onboarding/emergency')}>Need help now?</button> }
 
