@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { faker } from '@faker-js/faker/locale/en'
 import './onboarding.css'
 
 type Screen = 'safety' | 'emergency' | 'privacy' | 'choice' | 'create' | 'restore'
@@ -77,12 +78,33 @@ function Choice({ go }: { go: (screen: Screen) => void }) {
   return <div className="ob-screen"><Header title="Resilience" /><div className="ob-center-icon lilac"><Icon name="heart" size={31} /></div><div className="ob-copy ob-copy-centered"><h1>How would you like to continue?</h1><p>You don’t need an account to get help. Create one only if you want to save things.</p></div><div className="choice-list"><button className="choice featured" type="button"><span className="ob-round-icon"><Icon name="hidden" /></span><span><strong>Continue without an account</strong><small>Nothing is saved. Everything is cleared when you exit or the app hides itself.</small></span><Icon name="arrow" size={18} /></button><button className="choice" type="button" onClick={() => go('create')}><span className="ob-round-icon"><Icon name="account" /></span><span><strong>Create an account</strong><small>Just a nickname and a PIN. Keep your circle, wallet, records and messages.</small></span><Icon name="arrow" size={18} /></button></div><button className="ob-text-action" onClick={() => go('restore')}>I already have an account</button></div>
 }
 
-const nicknames = ['Sky 42', 'Quiet River', 'Blue Cedar', 'New Dawn', 'Brave Finch']
+const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+
+const generateNickname = () => {
+  const adjective = faker.word.adjective({
+    length: { min: 4, max: 8 },
+    strategy: 'closest',
+  })
+  const noun = faker.word.noun({
+    length: { min: 4, max: 8 },
+    strategy: 'closest',
+  })
+
+  return `${capitalize(adjective)} ${capitalize(noun)}`
+}
 
 function CreateAccount() {
-  const [nickname, setNickname] = useState(nicknames[0])
+  const [nickname, setNickname] = useState(generateNickname)
   const [pin, setPin] = useState('')
-  const shuffleName = () => setNickname(nicknames[(nicknames.indexOf(nickname) + 1) % nicknames.length])
+  const shuffleName = () => {
+    let nextNickname = generateNickname()
+
+    for (let attempt = 0; attempt < 3 && nextNickname === nickname; attempt += 1) {
+      nextNickname = generateNickname()
+    }
+
+    setNickname(nextNickname)
+  }
   const enterDigit = (digit: string) => setPin((current) => current.length < 4 ? current + digit : current)
   return <div className="ob-screen"><Header /><div className="account-content"><h1>Create your account</h1><p>Pick a nickname and a 4-digit PIN. This is how you’ll get back in.</p><label>Choose a nickname</label><div className="nickname-row"><input value={nickname} onChange={(event) => setNickname(event.target.value)} aria-label="Nickname" /><button type="button" onClick={shuffleName} aria-label="Suggest another nickname"><Icon name="refresh" /></button></div><small>Don’t use your real name.</small><h2>Create a 4-digit PIN</h2><div className="pin-dots" aria-label={`${pin.length} of 4 PIN digits entered`}>{[0, 1, 2, 3].map((index) => <span className={index < pin.length ? 'filled' : ''} key={index} />)}</div><div className="keypad">{['1','2','3','4','5','6','7','8','9'].map((digit) => <button type="button" onClick={() => enterDigit(digit)} key={digit}>{digit}</button>)}<span /><button type="button" onClick={() => enterDigit('0')}>0</button><button type="button" onClick={() => setPin((current) => current.slice(0, -1))} aria-label="Delete last digit">⌫</button></div></div><div className="ob-actions single"><button className="ob-primary" disabled={pin.length !== 4 || !nickname.trim()}>Continue</button></div></div>
 }

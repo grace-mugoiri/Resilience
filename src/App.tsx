@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import Onboarding from './onboarding/Onboarding'
+import { lazy, Suspense, useEffect, useState } from 'react'
 
 const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
+const Onboarding = lazy(() => import('./onboarding/Onboarding'))
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
@@ -48,7 +48,13 @@ function App() {
     setInstallPrompt(null)
   }
 
-  if (isOnboardingRoute) return <Onboarding />
+  if (isOnboardingRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Onboarding />
+      </Suspense>
+    )
+  }
 
   return (
     <main className="app-shell">
