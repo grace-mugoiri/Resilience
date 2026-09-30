@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 
 const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
+const isMessagesRoute = window.location.pathname.startsWith('/app/messages')
 const isWalletRoute = window.location.pathname.startsWith('/app/wallet')
 const isResourcesRoute = window.location.pathname.startsWith('/app/resources')
 const isCircleRoute = window.location.pathname.startsWith('/app/circle')
@@ -14,6 +15,7 @@ const Groups = lazy(() => import('./groups/Groups'))
 const Circle = lazy(() => import('./circle/Circle'))
 const Resources = lazy(() => import('./resources/Resources'))
 const Wallet = lazy(() => import('./wallet/Wallet'))
+const Messages = lazy(() => import('./messages/Messages'))
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
@@ -64,6 +66,14 @@ function App() {
     return (
       <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
         <Onboarding />
+      </Suspense>
+    )
+  }
+
+  if (isMessagesRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Messages />
       </Suspense>
     )
   }
