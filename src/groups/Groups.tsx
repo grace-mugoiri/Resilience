@@ -17,7 +17,7 @@ const go = (path: string) => window.location.assign(href(path))
 function Header({ title, back, menu }: { title: string; back: () => void; menu?: () => void }) {
   return <header className="groups-header"><button className="groups-back" type="button" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button><strong>{title}</strong>{menu && <button className="groups-menu-button" type="button" onClick={menu} aria-label="Group options"><Icon name="menu" /></button>}<button className="groups-exit" type="button" onClick={() => window.location.replace('/')}><Icon name="exit" size={17} />Exit</button></header>
 }
-function Nav() { return <nav className="groups-nav"><a className="active" href={href('/app')}><Icon name="home" /><span>Home</span></a><button><Icon name="chat" /><span>Messages</span></button><button><Icon name="wallet" /><span>Wallet</span></button><button><Icon name="settings" /><span>Settings</span></button></nav> }
+function Nav() { return <nav className="groups-nav"><a className="active" href={href('/app')}><Icon name="home" /><span>Home</span></a><a href={href('/app/messages')}><Icon name="chat" /><span>Messages</span></a><a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a><a href={href('/app/settings')}><Icon name="settings" /><span>Settings</span></a></nav> }
 
 const groupList = [
   { slug: 'healing', title: 'Healing after abuse', description: 'A safe space to share and recover from domestic abuse.', leader: 'Grace (Moderator)', action: 'Joined', access: 'joined' },

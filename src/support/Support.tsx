@@ -36,7 +36,7 @@ function Header({ title, guest, back, chatMenu }: { title: string; guest: boolea
 }
 
 function BottomNav({ guest, active = 'home' }: { guest: boolean; active?: 'home' | 'messages' }) {
-  return <nav className="support-nav" aria-label="App navigation"><a className={active === 'home' ? 'active' : ''} href={withMode('/app', guest)}><Icon name="home" /><span>Home</span></a><button className={active === 'messages' ? 'active' : ''} type="button"><Icon name="chat" /><span>Messages</span></button><button type="button"><Icon name="wallet" /><span>Wallet</span></button><button type="button"><Icon name="settings" /><span>Settings</span></button></nav>
+  return <nav className="support-nav" aria-label="App navigation"><a className={active === 'home' ? 'active' : ''} href={withMode('/app', guest)}><Icon name="home" /><span>Home</span></a><a className={active === 'messages' ? 'active' : ''} href={withMode('/app/messages', guest)}><Icon name="chat" /><span>Messages</span></a>{guest ? <a href={withMode('/app', guest)}><Icon name="wallet" /><span>Wallet</span></a> : <a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a>}<a href={withMode('/app/settings', guest)}><Icon name="settings" /><span>Settings</span></a></nav>
 }
 
 const counselors = [

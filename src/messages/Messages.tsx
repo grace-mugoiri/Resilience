@@ -18,7 +18,7 @@ const guest = () => new URLSearchParams(window.location.search).get('mode') === 
 const withMode = (path: string) => `${path}${guest() ? `${path.includes('?') ? '&' : '?'}mode=guest` : ''}`
 const go = (path: string) => window.location.assign(withMode(path))
 function Exit() { return <button className="messages-exit" onClick={() => window.location.replace('/')}><Icon name="exit" size={17} />Exit</button> }
-function Nav() { return <nav className="messages-nav"><a href={withMode('/app')}><Icon name="home" /><span>Home</span></a><a className="active" href={withMode('/app/messages')}><Icon name="chat" /><span>Messages</span></a>{guest() ? <a href={withMode('/app')}><Icon name="wallet" /><span>Wallet</span></a> : <a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a>}<button><Icon name="settings" /><span>Settings</span></button></nav> }
+function Nav() { return <nav className="messages-nav"><a href={withMode('/app')}><Icon name="home" /><span>Home</span></a><a className="active" href={withMode('/app/messages')}><Icon name="chat" /><span>Messages</span></a>{guest() ? <a href={withMode('/app')}><Icon name="wallet" /><span>Wallet</span></a> : <a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a>}<a href={withMode('/app/settings')}><Icon name="settings" /><span>Settings</span></a></nav> }
 
 type Conversation = { name: string; preview: string; time: string; type: Exclude<Filter, 'All'> | 'Counselor'; unread?: boolean; verified?: boolean; route: string }
 const conversations: Conversation[] = [
