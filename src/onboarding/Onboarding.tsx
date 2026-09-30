@@ -44,10 +44,16 @@ function ExitButton() {
 }
 
 function Header({ title, back }: { title?: string; back?: () => void }) {
+  const goBack = () => {
+    if (back) return back()
+    const previousPageIsLocal = document.referrer.startsWith(window.location.origin)
+    if (previousPageIsLocal && window.history.length > 1) window.history.back()
+    else window.location.assign('/')
+  }
   return (
     <header className="ob-header">
       <div className="ob-header-start">
-        {back && <button className="ob-back" type="button" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button>}
+        <button className="ob-back" type="button" onClick={goBack} aria-label="Go back"><Icon name="back" size={18} /></button>
         {title && <strong>{title}</strong>}
       </div>
       <ExitButton />
