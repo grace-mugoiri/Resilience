@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react'
+import Onboarding from './onboarding/Onboarding'
+
+const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
@@ -44,6 +47,8 @@ function App() {
     await installPrompt.userChoice
     setInstallPrompt(null)
   }
+
+  if (isOnboardingRoute) return <Onboarding />
 
   return (
     <main className="app-shell">
