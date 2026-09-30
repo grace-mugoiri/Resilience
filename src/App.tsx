@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
 const isMessagesRoute = window.location.pathname.startsWith('/app/messages')
 const isSettingsRoute = window.location.pathname.startsWith('/app/settings')
+const isRecordsRoute = window.location.pathname.startsWith('/app/records')
 const isWalletRoute = window.location.pathname.startsWith('/app/wallet')
 const isResourcesRoute = window.location.pathname.startsWith('/app/resources')
 const isCircleRoute = window.location.pathname.startsWith('/app/circle')
@@ -18,6 +19,7 @@ const Resources = lazy(() => import('./resources/Resources'))
 const Wallet = lazy(() => import('./wallet/Wallet'))
 const Messages = lazy(() => import('./messages/Messages'))
 const Settings = lazy(() => import('./settings/Settings'))
+const Records = lazy(() => import('./records/Records'))
 
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
@@ -84,6 +86,14 @@ function App() {
     return (
       <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
         <Settings />
+      </Suspense>
+    )
+  }
+
+  if (isRecordsRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Records />
       </Suspense>
     )
   }
