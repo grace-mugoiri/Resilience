@@ -1,5 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './support.css'
+import {
+  displayName,
+  loadCounselor,
+  loadDirectory,
+  parseProfilePath,
+  profilePath,
+  type Counselor,
+  type Status,
+} from './directory'
 
 type IconName = 'back' | 'exit' | 'search' | 'verified' | 'info' | 'more' | 'send' | 'home' | 'chat' | 'wallet' | 'settings' | 'block' | 'report' | 'trash'
 
@@ -31,30 +40,99 @@ function ExitButton() {
   return <button className="support-exit" type="button" onClick={() => window.location.replace('/')}><Icon name="exit" size={17} />Exit</button>
 }
 
-function Header({ title, guest, back, chatMenu }: { title: string; guest: boolean; back: () => void; chatMenu?: () => void }) {
-  return <header className="support-header" data-mode={guest ? 'guest' : 'account'}><button className="support-back" type="button" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button><strong>{title}</strong>{title === 'Grace' && <span className="verified"><Icon name="verified" size={17} /></span>}{chatMenu && <button className="more-button" type="button" onClick={chatMenu} aria-label="Open conversation menu"><Icon name="more" size={19} /></button>}<ExitButton /></header>
+function Header({ title, guest, back, chatMenu, verified = false }: { title: string; guest: boolean; back: () => void; chatMenu?: () => void; verified?: boolean }) {
+  return <header className="support-header" data-mode={guest ? 'guest' : 'account'}><button className="support-back" type="button" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button><strong>{title}</strong>{verified && <span className="verified"><Icon name="verified" size={17} /></span>}{chatMenu && <button className="more-button" type="button" onClick={chatMenu} aria-label="Open conversation menu"><Icon name="more" size={19} /></button>}<ExitButton /></header>
 }
 
 function BottomNav({ guest, active = 'home' }: { guest: boolean; active?: 'home' | 'messages' }) {
   return <nav className="support-nav" aria-label="App navigation"><a className={active === 'home' ? 'active' : ''} href={withMode('/app', guest)}><Icon name="home" /><span>Home</span></a><a className={active === 'messages' ? 'active' : ''} href={withMode('/app/messages', guest)}><Icon name="chat" /><span>Messages</span></a>{guest ? <a href={withMode('/app', guest)}><Icon name="wallet" /><span>Wallet</span></a> : <a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a>}<a href={withMode('/app/settings', guest)}><Icon name="settings" /><span>Settings</span></a></nav>
 }
 
-const counselors = [
-  { name: 'Counselor Grace', state: 'Verified by FIDA Kenya', tone: 'verified', tags: ['Trauma support', 'Legal aid'], reply: 'Usually replies within a few hours' },
-  { name: 'Amani Support', state: 'Verification expired', tone: 'expired', tags: ['Trauma support'], reply: 'Usually replies within 1 day' },
-  { name: 'Salma H.', state: 'Verification removed', tone: 'removed', tags: ['Health', 'Shelter'], reply: 'Usually replies in 30 mins', note: 'This counselor can no longer be verified. Be careful sharing personal details.' },
-  { name: 'Peer Supporter Joy', state: 'Not verified', tone: 'neutral', tags: ['Trauma support', 'Health'], reply: 'Usually replies within a day' },
-]
+type Loaded<T> = { state: 'loading' } | { state: 'error' } | { state: 'ready'; value: T }
+
+// Fetches once per `key` and `attempt`; bump the attempt to retry. `key` names everything `load`
+// depends on, which is why `load` itself is left out of the effect dependencies.
+function useLoad<T>(load: (signal: AbortSignal) => Promise<T>, attempt: number, key: string): Loaded<T> {
+  const [result, setResult] = useState<{ key: string; loaded: Loaded<T> }>({ key: '', loaded: { state: 'loading' } })
+  const current = `${key}#${attempt}`
+  useEffect(() => {
+    const controller = new AbortController()
+    load(controller.signal).then(
+      (value) => setResult({ key: current, loaded: { state: 'ready', value } }),
+      () => { if (!controller.signal.aborted) setResult({ key: current, loaded: { state: 'error' } }) },
+    )
+    return () => controller.abort()
+  }, [current]) // eslint-disable-line react-hooks/exhaustive-deps
+  return result.key === current ? result.loaded : { state: 'loading' }
+}
+
+const tones: Record<Status, string> = { verified: 'verified', expired: 'expired', removed: 'removed', unverified: 'neutral' }
+
+function statusLabel(counselor: Counselor): string {
+  if (counselor.status === 'verified') return `Verified by ${counselor.orgName}`
+  if (counselor.status === 'expired') return 'Verification expired'
+  if (counselor.status === 'removed') return 'Verification removed'
+  return 'Not verified'
+}
+
+function statusNote(counselor: Counselor): string | null {
+  if (counselor.status === 'removed') return 'This counselor can no longer be verified. Be careful sharing personal details.'
+  if (counselor.status === 'unverified') return "We couldn't check this counselor's verification. Be careful sharing personal details."
+  return null
+}
+
+const monthYear = (date: Date) => date.toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })
+
+function LoadProblem({ retry }: { retry: () => void }) {
+  return <div className="directory-message" role="alert"><p>We couldn't load counselors. Check your connection and try again.</p><button className="support-secondary" type="button" onClick={retry}>Try again</button></div>
+}
+
+const filters = ['All', 'Legal aid', 'Trauma support', 'Health', 'Shelter']
 
 function Directory({ guest }: { guest: boolean }) {
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState('Legal aid')
-  const results = useMemo(() => counselors.filter((item) => item.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'All' || item.tags.includes(filter))), [filter, search])
-  return <div className="support-screen"><Header title="Talk to someone" guest={guest} back={() => go('/app', guest)} /><div className="directory-tabs"><button className="active">One-to-one</button><button type="button" onClick={() => go('/app/groups', guest)}>Groups</button></div><label className="counselor-search"><Icon name="search" size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search counselors…" /></label><div className="filter-row">{['Legal aid', 'Trauma support', 'Health', 'Shelter', 'All'].map((tag) => <button className={filter === tag ? 'active' : ''} type="button" onClick={() => setFilter(tag)} key={tag}>{tag}</button>)}</div><main className="counselor-list">{results.map((person) => <button className="counselor-card" type="button" onClick={() => person.name === 'Counselor Grace' && go('/app/counselors/grace', guest)} key={person.name}><span className="counselor-name">{person.name}</span><span className={`verification ${person.tone}`}><Icon name={person.tone === 'neutral' ? 'info' : 'verified'} size={15} />{person.state}</span><span className="counselor-tags">{person.tags.map((tag) => <small key={tag}>{tag}</small>)}</span><span className="reply-time">{person.reply}</span>{person.note && <span className="verification-note">{person.note}</span>}</button>)}</main><BottomNav guest={guest} /></div>
+  const [filter, setFilter] = useState('All')
+  const [attempt, setAttempt] = useState(0)
+  const directory = useLoad(loadDirectory, attempt, 'directory')
+  const results = useMemo(() => {
+    if (directory.state !== 'ready') return []
+    const query = search.trim().toLowerCase()
+    return directory.value.filter((person) =>
+      (displayName(person).toLowerCase().includes(query) || person.orgName.toLowerCase().includes(query)) &&
+      (filter === 'All' || (person.profile?.specialties ?? []).some((tag) => tag.toLowerCase() === filter.toLowerCase())))
+  }, [directory, filter, search])
+  return <div className="support-screen"><Header title="Talk to someone" guest={guest} back={() => go('/app', guest)} /><div className="directory-tabs"><button className="active">One-to-one</button><button type="button" onClick={() => go('/app/groups', guest)}>Groups</button></div><label className="counselor-search"><Icon name="search" size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search counselors…" /></label><div className="filter-row">{filters.map((tag) => <button className={filter === tag ? 'active' : ''} type="button" onClick={() => setFilter(tag)} key={tag}>{tag}</button>)}</div><main className="counselor-list" aria-busy={directory.state === 'loading'}>
+    {directory.state === 'loading' && <p className="directory-message">Loading counselors…</p>}
+    {directory.state === 'error' && <LoadProblem retry={() => setAttempt((n) => n + 1)} />}
+    {directory.state === 'ready' && results.length === 0 && <p className="directory-message">{directory.value.length === 0 ? 'No counselors are listed yet.' : 'No counselors match your search.'}</p>}
+    {results.map((person) => { const note = statusNote(person); return <button className="counselor-card" type="button" onClick={() => go(profilePath(person), guest)} key={`${person.orgId}:${person.pubkey}`}><span className="counselor-name">{displayName(person)}</span><span className={`verification ${tones[person.status]}`}><Icon name={person.status === 'unverified' ? 'info' : 'verified'} size={15} />{statusLabel(person)}</span>{person.profile && person.profile.specialties.length > 0 && <span className="counselor-tags">{person.profile.specialties.map((tag) => <small key={tag}>{tag}</small>)}</span>}{person.profile?.responseTime && <span className="reply-time">{person.profile.responseTime}</span>}{note && <span className="verification-note">{note}</span>}</button> })}
+  </main><BottomNav guest={guest} /></div>
 }
 
-function Profile({ guest }: { guest: boolean }) {
-  return <div className="support-screen"><Header title="Grace" guest={guest} back={() => go('/app/counselors', guest)} /><main className="profile"><span className="profile-avatar" aria-hidden="true">G</span><h1>Grace</h1><p>Usually replies within a few hours</p><div className="profile-tags"><span>Trauma support</span><span>Legal aid</span></div><section className="verification-card"><strong><Icon name="verified" size={20} />Verified by FIDA Kenya</strong><p>Verification expires: October 2026</p><button type="button">How verification works <span>⌄</span></button></section></main><button className="support-primary profile-start" type="button" onClick={() => go('/app/chat/grace', guest)}>Start a private conversation</button><BottomNav guest={guest} /></div>
+function VerificationCard({ counselor }: { counselor: Counselor }) {
+  const [open, setOpen] = useState(false)
+  const until = counselor.verifiedUntil
+  const detail = counselor.status === 'verified' && until ? `Verification expires: ${monthYear(until)}`
+    : counselor.status === 'expired' && until ? `${counselor.orgName}'s verification ended in ${monthYear(until)}.`
+    : statusNote(counselor) ?? ''
+  return <section className={`verification-card ${tones[counselor.status]}`}><strong><Icon name={counselor.status === 'unverified' ? 'info' : 'verified'} size={20} />{statusLabel(counselor)}</strong><p>{detail}</p><button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>How verification works <span>{open ? '⌃' : '⌄'}</span></button>{open && <p className="verification-explainer">{counselor.orgName} signs its list of counselors with its own key. This app checks that signature on your phone, so nobody else can add a counselor to the list. If {counselor.orgName} removes someone, or lets the list run out, you see it here.</p>}</section>
+}
+
+function Profile({ guest, orgId, pubkey }: { guest: boolean; orgId: string; pubkey: string }) {
+  const [attempt, setAttempt] = useState(0)
+  const loaded = useLoad((signal) => loadCounselor(orgId, pubkey, signal), attempt, `${orgId}/${pubkey}`)
+  const back = () => go('/app/counselors', guest)
+  if (loaded.state !== 'ready' || loaded.value === null) {
+    return <div className="support-screen"><Header title="Counselor" guest={guest} back={back} /><main className="profile">
+      {loaded.state === 'loading' && <p className="directory-message">Loading…</p>}
+      {loaded.state === 'error' && <LoadProblem retry={() => setAttempt((n) => n + 1)} />}
+      {loaded.state === 'ready' && <p className="directory-message">This counselor is no longer listed by this organisation.</p>}
+    </main><BottomNav guest={guest} /></div>
+  }
+  const counselor = loaded.value
+  const name = displayName(counselor)
+  const profile = counselor.profile
+  return <div className="support-screen"><Header title={name} guest={guest} back={back} verified={counselor.status === 'verified'} /><main className="profile"><span className="profile-avatar" aria-hidden="true">{name.charAt(0).toUpperCase()}</span><h1>{name}</h1>{profile?.responseTime && <p>{profile.responseTime}</p>}{profile && profile.specialties.length > 0 && <div className="profile-tags">{profile.specialties.map((tag) => <span key={tag}>{tag}</span>)}</div>}{profile?.about && <p className="profile-about">{profile.about}</p>}{profile && profile.languages.length > 0 && <p className="profile-languages">Speaks {profile.languages.join(', ')}</p>}<VerificationCard counselor={counselor} /></main><button className="support-primary profile-start" type="button" onClick={() => go('/app/chat/grace', guest)}>Start a private conversation</button><BottomNav guest={guest} /></div>
 }
 
 type Message = { from: 'them' | 'me'; text: string; status?: string }
@@ -85,9 +163,9 @@ function Chat({ guest }: { guest: boolean }) {
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState(false)
   const [keepPrompt, setKeepPrompt] = useState(false)
-  const back = () => guest ? setKeepPrompt(true) : go('/app/counselors/grace', false)
+  const back = () => guest ? setKeepPrompt(true) : go('/app/counselors', false)
   const send = () => { if (!draft.trim()) return; setMessages((current) => [...current, { from: 'me', text: draft.trim(), status: navigator.onLine ? 'Sent' : 'Waiting for connection' }]); setDraft('') }
-  return <div className="support-screen chat-screen"><Header title="Grace" guest={guest} back={back} chatMenu={() => setMenu((open) => !open)} />{guest ? <div className="chat-notice">This conversation is cleared when you leave.<button onClick={() => window.location.assign('/onboarding/create')}>Create an account to keep it</button></div> : !navigator.onLine && <div className="chat-notice">You’re offline. Messages will send when you’re connected.</div>}<main className="messages">{messages.map((message, index) => <div className={`message-row ${message.from}`} key={`${message.text}-${index}`}><p>{message.text}</p>{message.status && <small className={message.status.startsWith('Failed') ? 'failed' : ''}>{message.status}</small>}</div>)}</main><form className="composer" onSubmit={(event) => { event.preventDefault(); send() }}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={guest ? 'Type a message…' : 'Write a message…'} aria-label="Message" /><button type="submit" aria-label="Send message"><Icon name="send" size={20} /></button></form><BottomNav guest={guest} active="messages" />{menu && <ChatMenu close={() => setMenu(false)} report={() => go('/app/report', guest)} clear={() => { setMessages([]); setMenu(false) }} />}{keepPrompt && <KeepConversation close={() => setKeepPrompt(false)} leave={() => go('/app', true)} />}</div>
+  return <div className="support-screen chat-screen"><Header title="Grace" guest={guest} back={back} chatMenu={() => setMenu((open) => !open)} verified />{guest ? <div className="chat-notice">This conversation is cleared when you leave.<button onClick={() => window.location.assign('/onboarding/create')}>Create an account to keep it</button></div> : !navigator.onLine && <div className="chat-notice">You’re offline. Messages will send when you’re connected.</div>}<main className="messages">{messages.map((message, index) => <div className={`message-row ${message.from}`} key={`${message.text}-${index}`}><p>{message.text}</p>{message.status && <small className={message.status.startsWith('Failed') ? 'failed' : ''}>{message.status}</small>}</div>)}</main><form className="composer" onSubmit={(event) => { event.preventDefault(); send() }}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={guest ? 'Type a message…' : 'Write a message…'} aria-label="Message" /><button type="submit" aria-label="Send message"><Icon name="send" size={20} /></button></form><BottomNav guest={guest} active="messages" />{menu && <ChatMenu close={() => setMenu(false)} report={() => go('/app/report', guest)} clear={() => { setMessages([]); setMenu(false) }} />}{keepPrompt && <KeepConversation close={() => setKeepPrompt(false)} leave={() => go('/app', true)} />}</div>
 }
 
 const reasons = ['Harassment', 'Asking for personal details', 'Pretending to be someone else', 'Spam', 'Something else']
@@ -101,7 +179,8 @@ function Report({ guest }: { guest: boolean }) {
 export default function Support() {
   const guest = new URLSearchParams(window.location.search).get('mode') === 'guest'
   const path = window.location.pathname
-  if (path === '/app/counselors/grace') return <Profile guest={guest} />
+  const profile = parseProfilePath(path)
+  if (profile) return <Profile guest={guest} orgId={profile.orgId} pubkey={profile.pubkey} />
   if (path === '/app/chat/grace') return <Chat guest={guest} />
   if (path === '/app/report') return <Report guest={guest} />
   return <Directory guest={guest} />

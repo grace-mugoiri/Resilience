@@ -21,11 +21,28 @@ npm run dev
 
 Open the URL printed by Vite (normally `http://localhost:5173`).
 
+## Connecting to the API
+
+The **Talk to someone** counselor screens read the counselor directory from the Resilience API
+(the `backend/` folder on the backend branch). By default the app calls `http://localhost:8000`.
+To use another address, copy `.env.example` to `.env.local` and change `VITE_API_BASE`, then
+restart `npm run dev`.
+
+The API must allow this app's address in its `CORS_ORIGINS` setting. For local development that
+is `http://localhost:5173`.
+
+The app does not take the API's word for who is verified. Each organisation signs its list of
+counselors and each counselor signs her own profile with Nostr keys, and the app checks both
+signatures in the browser (`src/support/directory.ts`). If a list fails the check, its counselors
+show as **Not verified**. Profile pictures are never loaded, because loading an image would give
+the image's host the survivor's IP address.
+
 ## Available commands
 
 - `npm run dev` starts the development server.
 - `npm run build` type-checks and creates a production build in `dist/`.
 - `npm run lint` checks the code with ESLint.
+- `npm test` runs the unit tests with Vitest.
 - `npm run preview` serves the production build locally.
 
 The service worker is generated during a production build. To test installation

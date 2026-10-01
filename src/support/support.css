@@ -36,6 +36,14 @@
 .profile-tags { display: flex; gap: 0.5rem; }
 .verification-card { width: 100%; margin-top: 3rem; padding: 1.2rem; border: 1px solid var(--sp-line); border-radius: 1.1rem; background: white; }
 .verification-card strong { display: flex; align-items: center; gap: 0.5rem; color: var(--sp-green); }
+.verification-card.expired strong { color: #a86c0b; }
+.verification-card.removed strong { color: var(--sp-red); }
+.verification-card.neutral strong { color: var(--sp-muted); }
+.verification-card .verification-explainer { margin: 0.8rem 0 0; line-height: 1.45; }
+.profile-about, .profile-languages { margin: 1rem 0 0; color: var(--sp-deep); font-size: 0.86rem; line-height: 1.45; text-align: center; }
+.profile-languages { margin-top: 0.5rem; color: var(--sp-muted); }
+.directory-message { margin: 1.5rem 0; display: grid; gap: 1rem; color: var(--sp-muted); font-size: 0.86rem; text-align: center; }
+.directory-message p { margin: 0; }
 .verification-card p { color: var(--sp-muted); font-size: 0.78rem; }
 .verification-card button { width: 100%; padding: 0.9rem 0 0; display: flex; justify-content: space-between; border: 0; border-top: 1px solid var(--sp-line); color: var(--sp-purple); background: transparent; font-weight: 700; cursor: pointer; }
 .support-primary, .support-secondary { width: 100%; min-height: 3.25rem; border-radius: 999px; font-weight: 700; cursor: pointer; }
