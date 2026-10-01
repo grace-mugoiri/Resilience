@@ -22,12 +22,13 @@ class RosterError(Exception):
 @dataclass(frozen=True)
 class ParsedRoster:
     event_id: str
+    signer_pubkey: str
     created_at: int
     expires_at: int
     members: list[str]
 
 
-def parse_roster(event: object, org_pubkey: str, now: int) -> ParsedRoster:
+def parse_roster(event: object, operational_pubkey: str, now: int) -> ParsedRoster:
     if not verify_event(event):
         raise RosterError(400, "not a valid signed Nostr event")
     assert isinstance(event, dict)
@@ -35,8 +36,8 @@ def parse_roster(event: object, org_pubkey: str, now: int) -> ParsedRoster:
         raise RosterError(400, "event must not contain NUL characters")
     if event["kind"] != ROSTER_KIND or first_tag(event, "d") != ROSTER_D_TAG:
         raise RosterError(400, f"roster must be kind {ROSTER_KIND} with d={ROSTER_D_TAG}")
-    if event["pubkey"] != org_pubkey:
-        raise RosterError(403, "roster must be signed by the organisation's own key")
+    if event["pubkey"] != operational_pubkey:
+        raise RosterError(403, "roster signer is not the authorized operational key")
     if event["created_at"] > now + MAX_CLOCK_SKEW_SECONDS:
         raise RosterError(400, "roster is dated in the future")
 
@@ -58,4 +59,4 @@ def parse_roster(event: object, org_pubkey: str, now: int) -> ParsedRoster:
     if len(members) > MAX_MEMBERS:
         raise RosterError(400, f"a roster may list at most {MAX_MEMBERS} counsellors")
 
-    return ParsedRoster(event["id"], event["created_at"], int(expiration), members)
+    return ParsedRoster(event["id"], event["pubkey"], event["created_at"], int(expiration), members)

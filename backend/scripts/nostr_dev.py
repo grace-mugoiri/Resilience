@@ -3,6 +3,8 @@
   python scripts/nostr_dev.py pubkey --sec <hex>
   python scripts/nostr_dev.py nip05  --sec <hex>                  # a nostr.json vouching for it
   python scripts/nostr_dev.py auth   --sec <hex> --url <URL> [--method POST --data '<json>']
+  python scripts/nostr_dev.py authorize-key --sec <root hex> --operational-pubkey <hex>
+  python scripts/nostr_dev.py revoke-key --sec <root hex> --operational-pubkey <hex>
   python scripts/nostr_dev.py roster --sec <hex> [--days 30] <counsellor pubkey> ...
   python scripts/nostr_dev.py profile --sec <hex> --name "Counsellor Grace" \
       [--about "..."] [--specialty "Trauma support" ...] [--language English ...] \
@@ -28,7 +30,15 @@ from app.nostr.events import pubkey_of, sign_event  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("pubkey", "nip05", "auth", "roster", "profile"):
+    for name in (
+        "pubkey",
+        "nip05",
+        "auth",
+        "authorize-key",
+        "revoke-key",
+        "roster",
+        "profile",
+    ):
         p = sub.add_parser(name)
         p.add_argument("--sec", required=True, help="64-char hex secret key (test keys only)")
         if name == "auth":
@@ -38,6 +48,10 @@ def main() -> None:
         if name == "roster":
             p.add_argument("--days", type=int, default=30)
             p.add_argument("members", nargs="*")
+        if name in ("authorize-key", "revoke-key"):
+            p.add_argument("--operational-pubkey", required=True)
+        if name == "authorize-key":
+            p.add_argument("--days", type=int, default=30)
         if name == "profile":
             p.add_argument("--name", required=True)
             p.add_argument("--about")
@@ -62,6 +76,24 @@ def main() -> None:
         tags = [["d", "verified-counsellors"], *(["p", m] for m in args.members)]
         tags.append(["expiration", str(expires)])
         print(json.dumps(sign_event(args.sec, 30000, tags, "")))
+    elif args.cmd == "authorize-key":
+        now = int(time.time())
+        key = args.operational_pubkey
+        tags = [
+            ["d", f"resilience:org-operations:{key}"],
+            ["p", key],
+            ["valid_from", str(now)],
+            ["expiration", str(now + args.days * 86400)],
+            ["scope", "roster"],
+        ]
+        print(json.dumps(sign_event(args.sec, 30382, tags, "", created_at=now)))
+    elif args.cmd == "revoke-key":
+        key = args.operational_pubkey
+        tags = [
+            ["d", f"resilience:org-operations-revocation:{key}"],
+            ["p", key],
+        ]
+        print(json.dumps(sign_event(args.sec, 30383, tags, "")))
     elif args.cmd == "profile":
         content = {
             "name": args.name,

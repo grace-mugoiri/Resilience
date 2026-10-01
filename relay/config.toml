@@ -4,7 +4,7 @@
 [info]
 # Must be the public wss:// URL in production: NIP-42 auth checks it.
 relay_url = "ws://localhost:7777/"
-name = "resilience-relay"
+name = "resilience-relay-1"
 description = "Private relay for Resilience. Gift-wrapped messages are served only to their recipient."
 
 [network]
@@ -19,6 +19,12 @@ reject_future_seconds = 1800
 messages_per_sec = 5
 subscriptions_per_min = 10
 limit_scrapers = true
+# Reject oversized EVENT commands and websocket frames before parsing or persistence.
+max_event_bytes = 131072
+max_ws_message_bytes = 135168
+max_ws_frame_bytes = 135168
+# Resilience publishes encrypted gift wraps and signed directory/configuration metadata only.
+event_kind_allowlist = [0, 1059, 30000, 30078, 30382, 30383]
 
 [authorization]
 # NIP-42: clients authenticate with their key.

@@ -37,9 +37,11 @@ OTHER_SECRET = "3a" * 32
 # DELETE rather than TRUNCATE: TRUNCATE takes an exclusive lock and rewrites files, which made
 # every test wait about two seconds.
 CLEAN_DIRECTORY = (
-    "DELETE FROM disbursement_transitions; DELETE FROM disbursements; "
+    "DELETE FROM authorization_challenges; DELETE FROM disbursement_transitions; "
+    "DELETE FROM disbursements; "
     "DELETE FROM counsellor_attestations; DELETE FROM counsellor_profiles; "
-    "DELETE FROM roster_events; DELETE FROM organizations"
+    "DELETE FROM roster_events; DELETE FROM organization_operational_keys; "
+    "DELETE FROM organizations"
 )
 
 
@@ -77,12 +79,14 @@ def auth_header(
     created_at: int | None = None,
     kind: int = 27235,
     payload: str | None = None,
+    extra_tags: list[list[str]] | None = None,
 ) -> dict:
     tags = [["u", url], ["method", method]]
     if payload is not None:
         tags.append(["payload", payload])
     elif body is not None:
         tags.append(["payload", hashlib.sha256(body).hexdigest()])
+    tags.extend(extra_tags or [])
     event = sign_event(secret, kind, tags, "", created_at=created_at or int(time.time()))
     token = base64.b64encode(json.dumps(event).encode()).decode()
     return {"Authorization": f"Nostr {token}"}

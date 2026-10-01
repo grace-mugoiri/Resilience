@@ -1,13 +1,27 @@
+import time
+
 import pytest
 
 from app.directory.service import get_nip05_fetcher
 from app.main import app
 from app.nostr.events import pubkey_of
 from app.worker import recheck_nip05
-from tests.conftest import ADMIN_SECRET, OTHER_SECRET
-from tests.helpers import ORG_PUBKEY, ORG_SECRET, nostr_json, signed_get, signed_post
+from tests.conftest import ADMIN_SECRET, OTHER_SECRET, auth_header
+from tests.helpers import (
+    BASE,
+    ORG_PUBKEY,
+    ORG_SECRET,
+    nostr_json,
+    sensitive_tags,
+    signed_get,
+    signed_post,
+)
 
-APPLY = {"name": "Wangu Centre", "domain": "Wangu.ORG"}
+APPLY = {
+    "name": "Wangu Centre",
+    "domain": "Wangu.ORG",
+    "directory_visibility": "public",
+}
 
 
 @pytest.fixture
@@ -31,6 +45,7 @@ def test_apply_creates_a_pending_org_owned_by_the_signer(client):
     assert org["domain"] == "wangu.org"
     assert org["nip05"] == "_@wangu.org"
     assert org["nostr_pubkey"] == ORG_PUBKEY
+    assert org["directory_visibility"] == "public"
     assert org["status"] == "pending"
 
 
@@ -41,10 +56,21 @@ def test_apply_needs_a_signature(client):
 @pytest.mark.parametrize(
     "payload",
     [
-        {"name": "X", "domain": "wangu.org"},  # name too short
-        {"name": "Wangu", "domain": "localhost"},
-        {"name": "Wangu", "domain": "https://wangu.org"},
-        {"name": "Wangu", "domain": "wangu.org", "status": "approved"},  # cannot self-approve
+        {"name": "X", "domain": "wangu.org", "directory_visibility": "public"},
+        {"name": "Wangu", "domain": "localhost", "directory_visibility": "public"},
+        {
+            "name": "Wangu",
+            "domain": "https://wangu.org",
+            "directory_visibility": "public",
+        },
+        {
+            "name": "Wangu",
+            "domain": "wangu.org",
+            "directory_visibility": "public",
+            "status": "approved",
+        },  # cannot self-approve
+        {"name": "Wangu", "domain": "wangu.org"},  # privacy decision is required
+        {"name": "Wangu", "domain": "wangu.org", "directory_visibility": "private"},
     ],
 )
 def test_apply_rejects_bad_input(client, payload):
@@ -55,7 +81,10 @@ def test_one_application_per_domain_and_per_key(client):
     assert apply(client).status_code == 201
     other_key_same_domain = apply(client, APPLY, OTHER_SECRET)
     assert other_key_same_domain.status_code == 409
-    same_key_other_domain = apply(client, {"name": "Wangu 2", "domain": "wangu2.org"})
+    same_key_other_domain = apply(
+        client,
+        {"name": "Wangu 2", "domain": "wangu2.org", "directory_visibility": "public"},
+    )
     assert same_key_other_domain.status_code == 409
 
 
@@ -82,6 +111,41 @@ def test_approve_when_the_website_vouches(client, sites):
     listed = client.get("/v1/orgs")
     assert [o["id"] for o in listed.json()] == [org_id]
     assert listed.headers["cache-control"] == "public, max-age=60"
+
+
+def test_sensitive_admin_action_needs_scoped_server_challenge(client, sites):
+    org_id = apply(client).json()["id"]
+    sites["wangu.org"] = nostr_json(ORG_PUBKEY)
+    path = f"/v1/admin/orgs/{org_id}/approve"
+    headers = auth_header(BASE + path, "POST", b"", ADMIN_SECRET)
+    assert client.post(path, content=b"", headers=headers).status_code == 403
+
+
+def test_sensitive_challenge_is_bound_to_scope_and_single_use(client, sites):
+    org_id = apply(client).json()["id"]
+    sites["wangu.org"] = nostr_json(ORG_PUBKEY)
+    path = f"/v1/admin/orgs/{org_id}/approve"
+    scope = f"admin:org:approve:{org_id}"
+    tags = sensitive_tags(client, scope, ADMIN_SECRET)
+    wrong = auth_header(
+        BASE + path,
+        "POST",
+        b"",
+        ADMIN_SECRET,
+        extra_tags=[["scope", f"admin:org:suspend:{org_id}"], tags[1]],
+    )
+    assert client.post(path, content=b"", headers=wrong).status_code == 403
+    first = auth_header(BASE + path, "POST", b"", ADMIN_SECRET, extra_tags=tags)
+    assert client.post(path, content=b"", headers=first).status_code == 200
+    replay = auth_header(
+        BASE + path,
+        "POST",
+        b"",
+        ADMIN_SECRET,
+        created_at=int(time.time()) + 1,
+        extra_tags=tags,
+    )
+    assert client.post(path, content=b"", headers=replay).status_code == 403
 
 
 @pytest.mark.parametrize(

@@ -15,14 +15,23 @@ services:
       interval: 5s
       retries: 10
 
-  relay:
+  relay-1:
     image: scsibug/nostr-rs-relay:0.10.0
     environment:
-      RUST_LOG: warn  # keep the relay from logging client IPs against subscriptions
+      RUST_LOG: warn
     ports: ["7777:8080"]
     volumes:
       - ../relay/config.toml:/usr/src/app/config.toml:ro
-      - relaydata:/usr/src/app/db
+      - relaydata1:/usr/src/app/db
+
+  relay-2:
+    image: scsibug/nostr-rs-relay:0.10.0
+    environment:
+      RUST_LOG: warn
+    ports: ["7778:8080"]
+    volumes:
+      - ../relay/config-2.toml:/usr/src/app/config.toml:ro
+      - relaydata2:/usr/src/app/db
 
   api:
     build: .
@@ -50,4 +59,5 @@ services:
 
 volumes:
   pgdata:
-  relaydata:
+  relaydata1:
+  relaydata2:

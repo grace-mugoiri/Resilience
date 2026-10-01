@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     platform_pubkey: str | None = None
     signed_config_path: str = "config/client-config.signed.json"
     nip98_window_seconds: int = 60
+    sensitive_challenge_seconds: int = 120
     # Hex pubkeys allowed to approve and suspend organisations (comma separated).
     admin_pubkeys: Annotated[list[str], NoDecode] = []
     nip05_timeout_seconds: float = 5.0

@@ -13,13 +13,27 @@ from app.auth.nip98 import NostrPubkey
 from app.db.models import Organization
 from app.db.session import get_db
 from app.directory.nip05 import DomainError, normalize_domain
+from app.directory.operational_keys import (
+    OperationalKeyError,
+    parse_authorization,
+    parse_revocation,
+)
 from app.directory.profile import ProfileError, parse_profile
 from app.directory.roster import RosterError, parse_roster
-from app.directory.schemas import CounsellorOut, CounsellorsOut, OrgApplication, OrgOut
+from app.directory.schemas import (
+    CounsellorOut,
+    CounsellorsOut,
+    OperationalKeyOut,
+    OrgApplication,
+    OrgOut,
+)
 from app.directory.service import (
+    authorize_operational_key,
     counsellor_of,
     counsellors_of,
     get_org,
+    operational_key_for_roster,
+    revoke_operational_key,
     store_profile,
     store_roster,
 )
@@ -36,7 +50,12 @@ def apply(body: OrgApplication, pubkey: NostrPubkey, db: Db) -> OrgOut:
         domain = normalize_domain(body.domain)
     except DomainError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
-    org = Organization(name=body.name.strip(), domain=domain, nostr_pubkey=pubkey)
+    org = Organization(
+        name=body.name.strip(),
+        domain=domain,
+        nostr_pubkey=pubkey,
+        directory_visibility=body.directory_visibility,
+    )
     db.add(org)
     try:
         db.commit()
@@ -67,17 +86,67 @@ def list_counsellors(org_id: uuid.UUID, db: Db, response: Response) -> Counsello
 
 @router.put("/{org_id}/roster")
 def put_roster(org_id: uuid.UUID, db: Db, event: Annotated[dict, Body()]) -> CounsellorsOut:
-    """Takes the organisation's signed roster event. No NIP-98 header is needed: the event
-    carries the organisation's own signature, and older rosters are refused."""
+    """Accept a roster signed by an active root-authorized operational key."""
     org = get_org(db, org_id, lock=True)
     try:
-        roster = parse_roster(event, org.nostr_pubkey, int(time.time()))
+        signer = event.get("pubkey", "") if isinstance(event, dict) else ""
+        roster = parse_roster(event, signer, int(time.time()))
+        operational_key_for_roster(db, org, roster.signer_pubkey, roster.created_at)
         store_roster(db, org, roster, event)
     except RosterError as exc:
         db.rollback()
         raise HTTPException(exc.status_code, exc.detail) from exc
     db.commit()
     return counsellors_of(db, org)
+
+
+def _operational_key_out(key) -> OperationalKeyOut:
+    return OperationalKeyOut(
+        pubkey=key.pubkey,
+        scopes=key.scopes,
+        valid_from=key.valid_from,
+        expires_at=key.expires_at,
+        revoked_at=key.revoked_at,
+        authorization_event=key.authorization_event,
+        revocation_event=key.revocation_event,
+    )
+
+
+@router.put("/{org_id}/operational-keys")
+def put_operational_key(
+    org_id: uuid.UUID, db: Db, event: Annotated[dict, Body()]
+) -> OperationalKeyOut:
+    """Register or rotate an online key using an authorization signed by the offline root."""
+    org = get_org(db, org_id, lock=True)
+    try:
+        parsed = parse_authorization(event, org.nostr_pubkey, int(time.time()))
+        key = authorize_operational_key(db, org, parsed, event)
+    except OperationalKeyError as exc:
+        db.rollback()
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    db.commit()
+    return _operational_key_out(key)
+
+
+@router.put("/{org_id}/operational-keys/{pubkey}/revoke")
+def revoke_key(
+    org_id: uuid.UUID,
+    pubkey: Annotated[str, Path(pattern=r"^[0-9a-f]{64}$")],
+    db: Db,
+    event: Annotated[dict, Body()],
+) -> OperationalKeyOut:
+    """Immediately disable an operational key using a root-signed revocation."""
+    org = get_org(db, org_id, lock=True)
+    try:
+        parsed = parse_revocation(event, org.nostr_pubkey, int(time.time()))
+        if parsed.operational_pubkey != pubkey:
+            raise OperationalKeyError(400, "revocation p tag does not match the URL key")
+        key = revoke_operational_key(db, org, parsed, event)
+    except OperationalKeyError as exc:
+        db.rollback()
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    db.commit()
+    return _operational_key_out(key)
 
 
 @router.put("/{org_id}/counsellors/{pubkey}/profile")

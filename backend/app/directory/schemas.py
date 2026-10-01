@@ -12,6 +12,9 @@ class OrgApplication(BaseModel):
 
     name: str = Field(min_length=2, max_length=120)
     domain: str = Field(min_length=3, max_length=253)
+    # This consent is deliberately required: public kind-30000 p tags reveal the
+    # organization-to-counselor association. Private discovery is not in this MVP.
+    directory_visibility: Literal["public"]
 
 
 class OrgOut(BaseModel):
@@ -21,6 +24,7 @@ class OrgOut(BaseModel):
     nostr_pubkey: str
     nip05: str  # what a client checks itself: _@<domain>
     status: str
+    directory_visibility: Literal["public"]
     nip05_verified_at: datetime | None
 
     @classmethod
@@ -32,6 +36,7 @@ class OrgOut(BaseModel):
             nostr_pubkey=org.nostr_pubkey,
             nip05=f"_@{org.domain}",
             status=org.status,
+            directory_visibility=org.directory_visibility,
             nip05_verified_at=org.nip05_verified_at,
         )
 
@@ -66,4 +71,16 @@ class CounsellorsOut(BaseModel):
     # The signed roster itself, so the client can verify the organisation's signature
     # instead of trusting this server.
     roster: dict | None
+    # Root-signed event authorizing the key that signed `roster`.
+    roster_key_authorization: dict | None
     counsellors: list[CounsellorOut]
+
+
+class OperationalKeyOut(BaseModel):
+    pubkey: str
+    scopes: list[str]
+    valid_from: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    authorization_event: dict
+    revocation_event: dict | None
