@@ -60,3 +60,24 @@ def roster_event(
     if expires_in is not None:
         tags.append(["expiration", str(now + expires_in)])
     return sign_event(secret, kind, tags, "", created_at=created_at or now)
+
+
+def profile_event(
+    secret: str,
+    content: dict | str | None = None,
+    created_at: int | None = None,
+    kind: int = 0,
+    tags: list | None = None,
+) -> dict:
+    if content is None:
+        content = {
+            "name": "grace",
+            "display_name": "Counsellor Grace",
+            "about": "Trauma-informed counsellor.",
+            "specialties": ["Trauma support", "Legal aid"],
+            "languages": ["English", "Kiswahili"],
+            "response_time": "Usually replies within a few hours",
+            "picture": "https://images.example/grace.jpg",
+        }
+    body = content if isinstance(content, str) else json.dumps(content)
+    return sign_event(secret, kind, tags or [], body, created_at=created_at or int(time.time()))

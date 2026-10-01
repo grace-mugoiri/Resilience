@@ -142,8 +142,21 @@ pytest -v
 ## Test signing helpers
 
 `scripts/nostr_dev.py` provides development-only helpers for creating Nostr test keys, NIP-98
-headers, NIP-05 test files, and signed counsellor rosters. Use only throwaway secret keys with
-this script. Run `python scripts/nostr_dev.py --help` for usage.
+headers, NIP-05 test files, signed counsellor rosters, and signed counsellor profiles. Use only
+throwaway secret keys with this script. Run `python scripts/nostr_dev.py --help` for usage.
+
+For example, to give a counsellor on an approved organisation's roster a profile:
+
+```bash
+C1_SEC=$(printf '01%.0s' $(seq 32))
+C1=$(python scripts/nostr_dev.py pubkey --sec $C1_SEC)
+python scripts/nostr_dev.py profile --sec $C1_SEC --name "Counsellor Grace" \
+  --specialty "Trauma support" --specialty "Legal aid" --language English --language Kiswahili \
+  --response-time "Usually replies within a few hours" > /tmp/p1.json
+curl -s -X PUT -H "Content-Type: application/json" --data @/tmp/p1.json \
+  "http://localhost:8000/v1/orgs/$ORG_ID/counsellors/$C1/profile" | jq
+curl -s "http://localhost:8000/v1/orgs/$ORG_ID/counsellors" | jq '.counsellors[] | {status, profile}'
+```
 
 Protected API requests use a NIP-98 kind `27235` event. The `u` tag must contain the full public
 request URL, the `method` tag must match the HTTP method, and write requests must include the SHA-256
@@ -156,7 +169,7 @@ hash of the exact request body in a `payload` tag. Send the base64-encoded event
 |---|---|
 | `DATABASE_URL` | SQLAlchemy PostgreSQL URL |
 | `PUBLIC_API_BASE` | Public API URL used to validate NIP-98 requests |
-| `CORS_ORIGINS` | Comma-separated list of exact web client origins; `*` is rejected |
+| `CORS_ORIGINS` | Comma-separated list of exact web client origins; `*` is rejected. The example allows the Vite web client on `http://localhost:5173` |
 | `PLATFORM_PUBKEY` | Hex public key used to verify the signed client configuration |
 | `SIGNED_CONFIG_PATH` | Path to the signed client configuration event |
 | `ADMIN_PUBKEYS` | Comma-separated hex public keys allowed to administer organisations |

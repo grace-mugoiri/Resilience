@@ -38,7 +38,8 @@ OTHER_SECRET = "3a" * 32
 # every test wait about two seconds.
 CLEAN_DIRECTORY = (
     "DELETE FROM disbursement_transitions; DELETE FROM disbursements; "
-    "DELETE FROM counsellor_attestations; DELETE FROM roster_events; DELETE FROM organizations"
+    "DELETE FROM counsellor_attestations; DELETE FROM counsellor_profiles; "
+    "DELETE FROM roster_events; DELETE FROM organizations"
 )
 
 

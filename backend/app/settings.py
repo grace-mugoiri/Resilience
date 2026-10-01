@@ -13,7 +13,11 @@ class Settings(BaseSettings):
     # The URL clients sign in NIP-98. Behind a TLS proxy FastAPI sees an internal URL,
     # so the expected URL is always built from this, never from request.url.
     public_api_base: str = "http://localhost:8000"
-    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
+    # 5173 is the Vite dev server of the web client; 3000 is kept for the Next.js prototype.
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ]
     platform_pubkey: str | None = None
     signed_config_path: str = "config/client-config.signed.json"
     nip98_window_seconds: int = 60

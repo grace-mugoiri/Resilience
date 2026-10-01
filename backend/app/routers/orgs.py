@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -13,9 +13,16 @@ from app.auth.nip98 import NostrPubkey
 from app.db.models import Organization
 from app.db.session import get_db
 from app.directory.nip05 import DomainError, normalize_domain
+from app.directory.profile import ProfileError, parse_profile
 from app.directory.roster import RosterError, parse_roster
-from app.directory.schemas import CounsellorsOut, OrgApplication, OrgOut
-from app.directory.service import counsellors_of, get_org, store_roster
+from app.directory.schemas import CounsellorOut, CounsellorsOut, OrgApplication, OrgOut
+from app.directory.service import (
+    counsellor_of,
+    counsellors_of,
+    get_org,
+    store_profile,
+    store_roster,
+)
 
 router = APIRouter(prefix="/v1/orgs", tags=["directory"])
 Db = Annotated[Session, Depends(get_db)]
@@ -71,3 +78,26 @@ def put_roster(org_id: uuid.UUID, db: Db, event: Annotated[dict, Body()]) -> Cou
         raise HTTPException(exc.status_code, exc.detail) from exc
     db.commit()
     return counsellors_of(db, org)
+
+
+@router.put("/{org_id}/counsellors/{pubkey}/profile")
+def put_profile(
+    org_id: uuid.UUID,
+    pubkey: Annotated[str, Path(pattern=r"^[0-9a-f]{64}$")],
+    db: Db,
+    event: Annotated[dict, Body()],
+) -> CounsellorOut:
+    """Takes a counsellor's signed kind 0 profile. Like the roster, no NIP-98 header is needed:
+    the event carries the counsellor's own signature, and older profiles are refused."""
+    org = get_org(db, org_id, lock=True)
+    try:
+        profile = parse_profile(event, pubkey, int(time.time()))
+        store_profile(db, org, profile, event)
+    except ProfileError as exc:
+        db.rollback()
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "profile changed at the same time; resend it") from exc
+    db.commit()
+    return counsellor_of(db, org, pubkey)

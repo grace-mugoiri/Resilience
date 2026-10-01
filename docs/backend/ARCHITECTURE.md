@@ -145,14 +145,32 @@ How it works in the code:
    needed because the event carries the organisation's own signature. The server refuses events
    signed by any other key, anything older than the stored roster, and expired or future-dated
    events. Anyone left off the newest roster is marked inactive.
-4. **Read.** `GET /v1/orgs` and `GET /v1/orgs/{id}/counsellors` are public and cacheable for 60
-   seconds. The counsellors response includes the signed roster itself.
-5. **Re-check.** Every 6 hours the worker repeats the NIP-05 check. A definite failure (wrong
+4. **Profile.** Each counsellor signs her own public profile, a standard Nostr kind 0 event,
+   and sends it to `PUT /v1/orgs/{id}/counsellors/{pubkey}/profile`. Like the roster, it needs no
+   NIP-98 because the event carries her own signature. The server accepts it only from a
+   counsellor on the organisation's current, unexpired roster, refuses any other signer and any
+   profile older than the stored one, and keeps the signed event verbatim. One profile per key,
+   as on Nostr. Besides `name`/`display_name` and `about`, Resilience reads three fields of its
+   own from the content: `specialties` and `languages` (lists of short text) and
+   `response_time` (for example "Usually replies within a few hours"). Other Nostr clients ignore
+   them.
+5. **Read.** `GET /v1/orgs` and `GET /v1/orgs/{id}/counsellors` are public and cacheable for 60
+   seconds. The counsellors response carries the organisation (name, domain, NIP-05), the signed
+   roster, and every counsellor the organisation has listed, each with a `status`:
+   `verified` (on the newest roster, not expired), `expired` (on the newest roster, but the
+   organisation let it lapse) or `removed` (left off the newest roster). Removed and expired
+   counsellors stay in the list so a survivor already talking to one is warned instead of
+   watching them vanish. Each entry has the parsed profile and the signed profile event, so the
+   client can check both signatures itself. `picture` and `banner` are never returned: loading an
+   image URL would give that host the survivor's IP address, so clients must not load them from
+   the signed event either.
+6. **Re-check.** Every 6 hours the worker repeats the NIP-05 check. A definite failure (wrong
    key, no file, a redirect) suspends the organisation. A timeout or a 5xx is only logged, so a
    website's bad hour does not take an organisation offline.
 
-Not built yet: the worker pulling rosters from the relay by itself (the dashboard sends them to
-the API), and the platform-signed approved-orgs list for clients to verify.
+Not built yet: the worker pulling rosters and counsellor profiles from the relay by itself (the
+dashboard sends them to the API), and the platform-signed approved-orgs list for clients to
+verify.
 
 ### 5.4 Disbursements: emergency money (next)
 
@@ -203,6 +221,7 @@ wallet at all. No M-Pesa (Daraja) payouts to survivors: they show on her M-Pesa 
 | `GET /v1/orgs`, `GET /v1/orgs/{id}/counsellors` | none | built |
 | `POST /v1/orgs` | NIP-98 | built |
 | `PUT /v1/orgs/{id}/roster` | none (the body is a signed event) | built |
+| `PUT /v1/orgs/{id}/counsellors/{pubkey}/profile` | none (the body is the counsellor's signed kind 0) | built |
 | `GET /v1/admin/orgs?status=` | NIP-98, platform admin key | built |
 | `POST /v1/admin/orgs/{id}/approve` \| `/suspend` | NIP-98, platform admin key | built |
 | `POST /v1/disbursements` + `Idempotency-Key` | NIP-98, org or counsellor | next |
@@ -224,7 +243,7 @@ wallet at all. No M-Pesa (Daraja) payouts to survivors: they show on her M-Pesa 
 No group messaging: NIP-17 groups have no admins and no bans, so an abuser who gets into a
 support group cannot be removed.
 
-## 7. Data model (migration 0001, built)
+## 7. Data model (migrations 0001 and 0002, built)
 
 ```
 organizations            id, name, domain (unique), nostr_pubkey (unique),
@@ -233,6 +252,8 @@ organizations            id, name, domain (unique), nostr_pubkey (unique),
 roster_events            event_id pk, org_id, created_at, raw jsonb   -- signed source of truth
 counsellor_attestations  (org_id, counsellor_pubkey) pk, roster_event_id, issued_at,
                          expires_at, active
+counsellor_profiles      counsellor_pubkey pk, event_id (unique), created_at, raw jsonb,
+                         updated_at                                  -- signed kind 0, 0002
 disbursements            id, org_id, idempotency_key, request_hash, amount_sat, amount_kes,
                          rate_source, reason_code, state, payment_hash (unique), invoice,
                          invoice_expires_at, created_by_pubkey, created/updated/paid_at

@@ -55,6 +55,21 @@ class Organization(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CounsellorProfile(Base):
+    """A counsellor's signed kind 0 profile, kept verbatim. One per key, as on Nostr: a newer
+    profile replaces the older one."""
+
+    __tablename__ = "counsellor_profiles"
+
+    counsellor_pubkey: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    raw: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class RosterEvent(Base):
     """A signed kind 30000 roster, kept verbatim as the source of truth."""
 

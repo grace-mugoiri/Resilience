@@ -4,6 +4,9 @@
   python scripts/nostr_dev.py nip05  --sec <hex>                  # a nostr.json vouching for it
   python scripts/nostr_dev.py auth   --sec <hex> --url <URL> [--method POST --data '<json>']
   python scripts/nostr_dev.py roster --sec <hex> [--days 30] <counsellor pubkey> ...
+  python scripts/nostr_dev.py profile --sec <hex> --name "Counsellor Grace" \
+      [--about "..."] [--specialty "Trauma support" ...] [--language English ...] \
+      [--response-time "Usually replies within a few hours"]
 
 `auth` prints a full header value: use it as -H "Authorization: $(python ... auth ...)".
 For POST, --data must be byte-for-byte the body you send with curl --data.
@@ -25,7 +28,7 @@ from app.nostr.events import pubkey_of, sign_event  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("pubkey", "nip05", "auth", "roster"):
+    for name in ("pubkey", "nip05", "auth", "roster", "profile"):
         p = sub.add_parser(name)
         p.add_argument("--sec", required=True, help="64-char hex secret key (test keys only)")
         if name == "auth":
@@ -35,6 +38,12 @@ def main() -> None:
         if name == "roster":
             p.add_argument("--days", type=int, default=30)
             p.add_argument("members", nargs="*")
+        if name == "profile":
+            p.add_argument("--name", required=True)
+            p.add_argument("--about")
+            p.add_argument("--specialty", action="append", default=[])
+            p.add_argument("--language", action="append", default=[])
+            p.add_argument("--response-time")
     args = parser.parse_args()
 
     if args.cmd == "pubkey":
@@ -53,6 +62,16 @@ def main() -> None:
         tags = [["d", "verified-counsellors"], *(["p", m] for m in args.members)]
         tags.append(["expiration", str(expires)])
         print(json.dumps(sign_event(args.sec, 30000, tags, "")))
+    elif args.cmd == "profile":
+        content = {
+            "name": args.name,
+            "about": args.about,
+            "specialties": args.specialty,
+            "languages": args.language,
+            "response_time": args.response_time,
+        }
+        content = {key: value for key, value in content.items() if value not in (None, [])}
+        print(json.dumps(sign_event(args.sec, 0, [], json.dumps(content))))
 
 
 if __name__ == "__main__":

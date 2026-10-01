@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,9 +36,34 @@ class OrgOut(BaseModel):
         )
 
 
+CounsellorStatus = Literal["verified", "expired", "removed"]
+
+
+class CounsellorProfileOut(BaseModel):
+    """What the counsellor says about herself, read from her signed kind 0 event."""
+
+    name: str
+    about: str | None
+    specialties: list[str]
+    languages: list[str]
+    response_time: str | None
+
+
+class CounsellorOut(BaseModel):
+    pubkey: str
+    # verified: on the organisation's newest roster, which has not expired.
+    # expired:  still on the newest roster, but the organisation let it lapse.
+    # removed:  left off the organisation's newest roster.
+    status: CounsellorStatus
+    verified_until: datetime | None  # the roster's expiration; null once removed
+    profile: CounsellorProfileOut | None
+    # The signed kind 0 event itself, so the client can check the counsellor's signature.
+    profile_event: dict | None
+
+
 class CounsellorsOut(BaseModel):
-    org_id: uuid.UUID
+    organization: OrgOut
     # The signed roster itself, so the client can verify the organisation's signature
     # instead of trusting this server.
     roster: dict | None
-    counsellors: list[str]
+    counsellors: list[CounsellorOut]

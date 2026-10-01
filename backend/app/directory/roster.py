@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 
-from app.nostr.events import first_tag, verify_event
+from app.nostr.events import first_tag, has_nul, verify_event
 
 ROSTER_KIND = 30000
 ROSTER_D_TAG = "verified-counsellors"
@@ -31,6 +31,8 @@ def parse_roster(event: object, org_pubkey: str, now: int) -> ParsedRoster:
     if not verify_event(event):
         raise RosterError(400, "not a valid signed Nostr event")
     assert isinstance(event, dict)
+    if has_nul(event):
+        raise RosterError(400, "event must not contain NUL characters")
     if event["kind"] != ROSTER_KIND or first_tag(event, "d") != ROSTER_D_TAG:
         raise RosterError(400, f"roster must be kind {ROSTER_KIND} with d={ROSTER_D_TAG}")
     if event["pubkey"] != org_pubkey:

@@ -81,6 +81,12 @@ def sign_event(
     return event
 
 
+def has_nul(event: dict) -> bool:
+    """PostgreSQL JSONB cannot store U+0000, so events carrying it are refused up front."""
+    strings = [event["content"], *(x for tag in event["tags"] for x in tag)]
+    return any("\x00" in value for value in strings)
+
+
 def first_tag(event: dict, name: str) -> str | None:
     for tag in event.get("tags", []):
         if len(tag) >= 2 and tag[0] == name:
