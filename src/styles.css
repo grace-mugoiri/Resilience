@@ -15,6 +15,7 @@
   --text-muted: #756b7d;
   --border: rgba(104, 63, 159, 0.14);
 }
+.donate-action{display:inline-flex;padding:.82rem 1.2rem;border:1px solid rgba(247,244,234,.35);border-radius:999px;color:#f7f4ea;font-weight:700;text-decoration:none;transition:border-color 160ms ease,background 160ms ease,transform 160ms ease}.donate-action:hover{border-color:#f0b868;background:rgba(240,184,104,.1);transform:translateY(-1px)}.donate-action:focus-visible{outline:3px solid #8dd4ac;outline-offset:3px}
 
 * {
   box-sizing: border-box;

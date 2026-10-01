@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 
 const isOnboardingRoute = window.location.pathname.startsWith('/onboarding')
+const isDonateRoute = window.location.pathname.startsWith('/donate')
 const isMessagesRoute = window.location.pathname.startsWith('/app/messages')
 const isSettingsRoute = window.location.pathname.startsWith('/app/settings')
 const isRecordsRoute = window.location.pathname.startsWith('/app/records')
@@ -11,6 +12,7 @@ const isGroupsRoute = window.location.pathname.startsWith('/app/groups')
 const isSupportRoute = window.location.pathname.startsWith('/app/counselors') || window.location.pathname.startsWith('/app/chat') || window.location.pathname.startsWith('/app/report')
 const isHomeRoute = window.location.pathname.startsWith('/app')
 const Onboarding = lazy(() => import('./onboarding/Onboarding'))
+const Donate = lazy(() => import('./donate/Donate'))
 const Home = lazy(() => import('./home/Home'))
 const Support = lazy(() => import('./support/Support'))
 const Groups = lazy(() => import('./groups/Groups'))
@@ -70,6 +72,14 @@ function App() {
     return (
       <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
         <Onboarding />
+      </Suspense>
+    )
+  }
+
+  if (isDonateRoute) {
+    return (
+      <Suspense fallback={<main className="onboarding-loading">Loading…</main>}>
+        <Donate />
       </Suspense>
     )
   }
@@ -167,6 +177,7 @@ function App() {
         </p>
         <div className="actions">
           <a className="primary-action" href="#features">Explore the foundation</a>
+          <a className="donate-action" href="/donate">Donate with Lightning</a>
           {installPrompt && !installed ? (
             <button className="install-action" type="button" onClick={installApp}>
               <span aria-hidden="true">↓</span>
