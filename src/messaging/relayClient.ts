@@ -1,0 +1,108 @@
+import { finalizeEvent, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
+import { SimplePool } from 'nostr-tools/pool'
+import type { SubCloser } from 'nostr-tools/abstract-pool'
+import { createGiftWraps, openGiftWrap, type OpenedMessage, type ResiliencePayload } from './envelope'
+import { MessagingRepository } from './repository'
+
+type PrivateKeyProvider = <T>(operation: (privateKey: Uint8Array) => T) => T
+type MessageHandler = (message: OpenedMessage) => void | Promise<void>
+type InvalidHandler = (event: unknown, error: unknown) => void
+
+export class RelayMessagingClient {
+  private readonly pool: SimplePool
+  private readonly repository: MessagingRepository
+  private subscription?: SubCloser
+  private retryTimer?: number
+  private onlineListener = () => void this.flushOutbox()
+
+  constructor(
+    private readonly relays: string[],
+    private readonly withPrivateKey: PrivateKeyProvider,
+    repository = new MessagingRepository(),
+  ) {
+    if (new Set(relays).size < 2) throw new Error('At least two distinct relays are required')
+    this.repository = repository
+    this.pool = new SimplePool({ enableReconnect: true })
+  }
+
+  private publicKey() {
+    return this.withPrivateKey((privateKey) => getPublicKey(privateKey))
+  }
+
+  async send(recipients: string[], payload: ResiliencePayload) {
+    const wrappers = this.withPrivateKey((privateKey) =>
+      createGiftWraps(privateKey, recipients, payload),
+    )
+    await Promise.all(wrappers.map((wrapper) => this.repository.enqueue(wrapper, this.relays)))
+    await this.flushOutbox()
+    return payload.client_message_id
+  }
+
+  async flushOutbox() {
+    if (!navigator.onLine) return
+    const records = await this.repository.pending()
+    await Promise.all(
+      records.flatMap((record) =>
+        Object.entries(record.relays)
+          .filter(([, delivery]) => delivery.status === 'pending' && delivery.nextAttemptAt <= Date.now())
+          .map(async ([relay]) => {
+            try {
+              const [result] = this.pool.publish([relay], record.event, {
+                onauth: async (template) =>
+                  this.withPrivateKey((privateKey) => finalizeEvent(template, privateKey)),
+                maxWait: 5000,
+              })
+              await result
+              await this.repository.deliveryResult(record.id, relay)
+            } catch (error) {
+              await this.repository.deliveryResult(record.id, relay, error)
+            }
+          }),
+      ),
+    )
+  }
+
+  start(onMessage: MessageHandler, onInvalid?: InvalidHandler) {
+    this.stop()
+    const publicKey = this.publicKey()
+    const seenInSession = new Set<string>()
+    this.subscription = this.pool.subscribeMany(
+      this.relays,
+      { kinds: [1059], '#p': [publicKey], since: Math.floor(Date.now() / 1000) - 8 * 24 * 60 * 60 },
+      {
+        onauth: async (template) =>
+          this.withPrivateKey((privateKey) => finalizeEvent(template, privateKey)),
+        alreadyHaveEvent: (id) => seenInSession.has(id),
+        onevent: async (event: NostrEvent) => {
+          if (seenInSession.has(event.id) || (await this.repository.hasSeen(event.id))) return
+          try {
+            const message = this.withPrivateKey((privateKey) => openGiftWrap(event, privateKey))
+            await onMessage(message)
+            seenInSession.add(event.id)
+            await this.repository.markSeen(event.id)
+          } catch (error) {
+            onInvalid?.(event, error)
+          }
+        },
+        oninvalidevent: (event) => onInvalid?.(event, new Error('Invalid Nostr signature')),
+      },
+    )
+    window.addEventListener('online', this.onlineListener)
+    this.retryTimer = window.setInterval(() => void this.flushOutbox(), 15_000)
+    void this.repository.purgeSeen()
+    void this.flushOutbox()
+  }
+
+  stop() {
+    this.subscription?.close('client stopped')
+    this.subscription = undefined
+    window.removeEventListener('online', this.onlineListener)
+    if (this.retryTimer) window.clearInterval(this.retryTimer)
+    this.retryTimer = undefined
+  }
+
+  destroy() {
+    this.stop()
+    this.pool.destroy()
+  }
+}

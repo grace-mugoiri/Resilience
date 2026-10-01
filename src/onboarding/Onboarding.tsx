@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { faker } from '@faker-js/faker/locale/en'
+import { accountVault } from '../security/vault'
 import './onboarding.css'
 
 type Screen = 'safety' | 'emergency' | 'privacy' | 'choice' | 'create' | 'restore'
@@ -102,6 +103,8 @@ const generateNickname = () => {
 function CreateAccount() {
   const [nickname, setNickname] = useState(generateNickname)
   const [pin, setPin] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
   const shuffleName = () => {
     let nextNickname = generateNickname()
 
@@ -112,15 +115,27 @@ function CreateAccount() {
     setNickname(nextNickname)
   }
   const enterDigit = (digit: string) => setPin((current) => current.length < 4 ? current + digit : current)
-  const continueToApp = () => {
-    sessionStorage.setItem('resilience-nickname', nickname.trim())
-    window.location.assign('/app')
+  const continueToApp = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await accountVault.create(pin, nickname)
+      sessionStorage.setItem('resilience-nickname', nickname.trim())
+      window.location.assign('/app/settings/backup/words')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not create the account')
+      setBusy(false)
+    }
   }
-  return <div className="ob-screen"><Header /><div className="account-content"><h1>Create your account</h1><p>Pick a nickname and a 4-digit PIN. This is how you’ll get back in.</p><label>Choose a nickname</label><div className="nickname-row"><input value={nickname} onChange={(event) => setNickname(event.target.value)} aria-label="Nickname" /><button type="button" onClick={shuffleName} aria-label="Suggest another nickname"><Icon name="refresh" /></button></div><small>Don’t use your real name.</small><h2>Create a 4-digit PIN</h2><div className="pin-dots" aria-label={`${pin.length} of 4 PIN digits entered`}>{[0, 1, 2, 3].map((index) => <span className={index < pin.length ? 'filled' : ''} key={index} />)}</div><div className="keypad">{['1','2','3','4','5','6','7','8','9'].map((digit) => <button type="button" onClick={() => enterDigit(digit)} key={digit}>{digit}</button>)}<span /><button type="button" onClick={() => enterDigit('0')}>0</button><button type="button" onClick={() => setPin((current) => current.slice(0, -1))} aria-label="Delete last digit">⌫</button></div></div><div className="ob-actions single"><button className="ob-primary" disabled={pin.length !== 4 || !nickname.trim()} onClick={continueToApp}>Continue</button></div></div>
+  return <div className="ob-screen"><Header /><div className="account-content"><h1>Create your account</h1><p>Pick a nickname and a 4-digit PIN. This is how you’ll get back in.</p><label>Choose a nickname</label><div className="nickname-row"><input value={nickname} onChange={(event) => setNickname(event.target.value)} aria-label="Nickname" /><button type="button" onClick={shuffleName} aria-label="Suggest another nickname"><Icon name="refresh" /></button></div><small>Don’t use your real name.</small><h2>Create a 4-digit PIN</h2><div className="pin-dots" aria-label={`${pin.length} of 4 PIN digits entered`}>{[0, 1, 2, 3].map((index) => <span className={index < pin.length ? 'filled' : ''} key={index} />)}</div><div className="keypad">{['1','2','3','4','5','6','7','8','9'].map((digit) => <button type="button" onClick={() => enterDigit(digit)} key={digit}>{digit}</button>)}<span /><button type="button" onClick={() => enterDigit('0')}>0</button><button type="button" onClick={() => setPin((current) => current.slice(0, -1))} aria-label="Delete last digit">⌫</button></div>{error && <p role="alert">{error}</p>}</div><div className="ob-actions single"><button className="ob-primary" disabled={busy || pin.length !== 4 || !nickname.trim()} onClick={continueToApp}>{busy ? 'Creating securely…' : 'Continue'}</button></div></div>
 }
 
 function Restore({ go }: { go: (screen: Screen) => void }) {
   const [words, setWords] = useState(Array(12).fill(''))
+  const [pin, setPin] = useState('')
+  const [nickname, setNickname] = useState(generateNickname)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
   const refs = useRef<Array<HTMLInputElement | null>>([])
   const updateWord = (index: number, value: string) => {
     const next = [...words]
@@ -133,7 +148,19 @@ function Restore({ go }: { go: (screen: Screen) => void }) {
     event.preventDefault()
     setWords([...pasted, ...Array(12 - pasted.length).fill('')])
   }
-  return <div className="ob-screen"><Header title="Restore your account" back={() => go('choice')} /><div className="restore-content"><h1>Enter your 12 backup words</h1><div className="word-grid">{words.map((word, index) => <label key={index}><span>{index + 1}</span><input ref={(element) => { refs.current[index] = element }} value={word} onChange={(event) => updateWord(index, event.target.value)} onPaste={handlePaste} aria-label={`Backup word ${index + 1}`} autoComplete="off" /></label>)}</div><p>Enter them in the same order you wrote them down.</p><button className="ob-primary" disabled={words.some((word) => !word)}>Restore account</button><button className="ob-text-action" onClick={() => go('safety')}>I don’t have backup words: start fresh</button></div></div>
+  const restore = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await accountVault.restore(words.join(' '), pin, nickname)
+      sessionStorage.setItem('resilience-nickname', nickname.trim())
+      window.location.assign('/app')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not restore the account')
+      setBusy(false)
+    }
+  }
+  return <div className="ob-screen"><Header title="Restore your account" back={() => go('choice')} /><div className="restore-content"><h1>Enter your 12 backup words</h1><div className="word-grid">{words.map((word, index) => <label key={index}><span>{index + 1}</span><input ref={(element) => { refs.current[index] = element }} value={word} onChange={(event) => updateWord(index, event.target.value)} onPaste={handlePaste} aria-label={`Backup word ${index + 1}`} autoComplete="off" /></label>)}</div><p>Enter them in the same order you wrote them down.</p><label>Choose a nickname<input value={nickname} onChange={(event) => setNickname(event.target.value)} autoComplete="off" /></label><label>Create a new 4-digit PIN<input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" type="password" autoComplete="new-password" /></label>{error && <p role="alert">{error}</p>}<button className="ob-primary" disabled={busy || words.some((word) => !word) || pin.length !== 4 || !nickname.trim()} onClick={restore}>{busy ? 'Restoring securely…' : 'Restore account'}</button><button className="ob-text-action" onClick={() => go('safety')}>I don’t have backup words: start fresh</button></div></div>
 }
 
 export default function Onboarding() {
