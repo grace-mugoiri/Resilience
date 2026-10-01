@@ -186,7 +186,7 @@ function App() {
           A privacy-first, pseudonymous support platform for survivors of gender-based violence — peer support groups, verified-by-external-org counselors, private messaging, selectively-shared health notes, and Bitcoin-based support ("zaps"), built as a responsive web app.
         </p>
         <div className="actions">
-          <a className="primary-action" href="#features">Explore the foundation</a>
+          <a className="primary-action" href="/onboarding/safety">Get support</a>
           <a className="counselor-action" href="/counselor">
             Joining as a counselor?
           </a>
