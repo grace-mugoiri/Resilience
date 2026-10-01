@@ -1,4 +1,4 @@
-from schemas import NostrEvent
+from .schemas import NostrEvent
 
 def validate_event(event: NostrEvent) -> bool:
     # Validate the basic structure of a nostr event 
