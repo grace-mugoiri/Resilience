@@ -169,6 +169,29 @@ h1 {
     box-shadow 160ms ease;
 }
 
+.counselor-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(104, 63, 159, 0.3);
+  border-radius: 999px;
+  color: var(--purple);
+  background: #ffffff;
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.counselor-action:hover {
+  border-color: var(--purple);
+  background: var(--purple-light);
+  transform: translateY(-1px);
+}
+
 .primary-action:hover {
   background: var(--purple-dark);
   transform: translateY(-1px);
@@ -200,7 +223,8 @@ h1 {
 }
 
 .install-action:focus-visible,
-.primary-action:focus-visible {
+.primary-action:focus-visible,
+.counselor-action:focus-visible {
   outline: 3px solid rgba(104, 63, 159, 0.3);
   outline-offset: 3px;
 }
