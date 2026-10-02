@@ -24,6 +24,10 @@ def create_app() -> FastAPI:
     app.include_router(groups.router)
     app.include_router(disbursements.router)
     app.include_router(admin.router)
+    if settings.app_env == "test":
+        from app.routers import mock_payments
+
+        app.include_router(mock_payments.router)
     return app
 
 

@@ -16,6 +16,7 @@ os.environ["CORS_ORIGINS"] = "https://app.example.test"
 os.environ["APP_ENV"] = "test"
 os.environ["PLATFORM_PUBKEY"] = ""  # env beats a developer's .env file
 os.environ["NIP05_DEV_BASE_URL"] = ""
+os.environ["LIGHTNING_NETWORK"] = "bc"  # invoice fixtures use the mainnet prefix
 ADMIN_SECRET = "ad" * 32
 
 from app.nostr.events import pubkey_of  # noqa: E402

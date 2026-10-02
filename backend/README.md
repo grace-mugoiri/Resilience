@@ -205,6 +205,16 @@ curl -fsS -X POST -H "Authorization: $APPROVE_AUTH" --data '' \
   "$API/v1/disbursements/$DISBURSEMENT_ID/approve" | jq
 ```
 
+An organisation can't pay anything until an admin sets its limits. The scope is
+`admin:org:limits:$ORG_ID`, with the same challenge sequence and a `PUT` to
+`$API/v1/admin/orgs/$ORG_ID/disbursement-limits` with a body such as
+`{"per_payment_cap_sat":50000,"daily_cap_sat":100000}`. The daily limit resets at midnight in
+Nairobi.
+
+After the second approval, the requesting counsellor attaches the survivor's invoice
+(`POST /v1/disbursements/{id}/invoice`), and the `payments` key holder marks it as paying
+(`/paying`), pays it from the organisation's wallet and submits the preimage (`/proof`).
+
 ### Counselor-directory privacy
 
 The current MVP implements public counselor discovery. Organization applications must explicitly
@@ -243,6 +253,7 @@ hash of the exact request body in a `payload` tag. Send the base64-encoded event
 | `ADMIN_PUBKEYS` | Comma-separated hex public keys allowed to administer organisations |
 | `NIP05_TIMEOUT_SECONDS` | Timeout for organisation website checks |
 | `NIP05_DEV_BASE_URL` | Local NIP-05 test-site override; only used when `APP_ENV` is `dev` or `test` |
+| `LIGHTNING_NETWORK` | Network an attached invoice must be for: `tbs` (signet, the default), `bc` (mainnet), `tb` (testnet) or `bcrt` (regtest) |
 
 Do not commit `.env`, private keys, or generated signed configuration files. The example settings
 are for local development only.

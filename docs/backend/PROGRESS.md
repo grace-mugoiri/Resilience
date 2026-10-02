@@ -37,7 +37,13 @@
 | `GET /v1/admin/orgs` | Platform admin NIP-98 key | Implemented |
 | `POST /v1/admin/orgs/{id}/approve` | Platform admin NIP-98 key | Implemented |
 | `POST /v1/admin/orgs/{id}/suspend` | Platform admin NIP-98 key | Implemented |
-| `/v1/disbursements` routes | Not implemented | Planned |
+| `PUT /v1/admin/orgs/{id}/disbursement-limits` | Platform admin NIP-98 key + challenge | Implemented |
+| `POST /v1/orgs/{id}/disbursements` | Active counsellor NIP-98 + challenge | Implemented |
+| `POST /v1/disbursements/{id}/approve` | `payments` key NIP-98 + challenge | Implemented |
+| `POST /v1/disbursements/{id}/invoice` | Requesting counsellor NIP-98 | Implemented |
+| `POST /v1/disbursements/{id}/paying`, `/proof` | `payments` key NIP-98 | Implemented |
+| `POST /v1/disbursements/{id}/cancel` | Requesting counsellor or `payments` key | Implemented |
+| `GET /v1/disbursements/{id}`, `GET /v1/orgs/{id}/disbursements` | NIP-98 | Implemented |
 
 ## Current limitations
 
@@ -45,7 +51,9 @@
   synchronization is not implemented.
 - The client-side verification flow for the platform-signed approved-organisation list is not
   implemented.
-- Lightning disbursement endpoints and payment-provider integration are not implemented.
+- Disbursements record payments made from the organisation's own wallet. The server never pays,
+  and doesn't check settlement with a wallet or provider: a payment marked `PAYING` stays there
+  until its preimage is submitted. M-Pesa payouts are not implemented.
 - Relay configuration has no event-kind allowlist yet. NIP-42 authentication applies to direct
   messages, while other event kinds may still be published.
 - Production TLS, public hostnames, and deployment configuration are not included in the local

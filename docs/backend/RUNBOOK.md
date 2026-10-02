@@ -156,13 +156,20 @@ The authoritative request and response schemas are at `/docs` and `/openapi.json
 | DELETE | `/v1/orgs/{org_id}/support-groups/{group_id}/members/{pubkey}` | `groups` key + challenge | Remove a membership |
 | POST | `/v1/orgs/{org_id}/disbursements` | Counselor + challenge + idempotency key | Create and sign approval one |
 | POST | `/v1/disbursements/{id}/approve` | `payments` key + challenge | Independent second approval |
+| POST | `/v1/disbursements/{id}/invoice` | Requesting counselor | Attach the survivor's invoice after approval two |
+| POST | `/v1/disbursements/{id}/paying` | `payments` key | Mark the payment as under way |
+| POST | `/v1/disbursements/{id}/proof` | `payments` key | Submit the preimage; `PAID` if it matches |
+| POST | `/v1/disbursements/{id}/cancel` | Requesting counselor or `payments` key | Cancel before payment starts |
 | GET | `/v1/disbursements/{id}` | NIP-98 authorized party | Read the record and approval state |
+| GET | `/v1/orgs/{org_id}/disbursements?state=` | Counselor (own) or `payments` key (all) | List requests |
+| PUT | `/v1/admin/orgs/{org_id}/disbursement-limits` | Admin challenge scope | Set per-payment and daily caps |
 
 Sensitive scopes are:
 
 ```text
 admin:org:approve:<org UUID>
 admin:org:suspend:<org UUID>
+admin:org:limits:<org UUID>
 group:create:<org UUID>
 group:member:<group UUID>
 disbursement:create:<org UUID>
