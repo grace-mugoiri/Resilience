@@ -534,3 +534,7 @@
 .co-settings > section.co-verification { gap: .45rem; padding-block: 1rem; }
 .co-verification strong { color: #25825d; font-size: .88rem; }
 .co-sign-out { align-self: flex-start; margin: .15rem 0 1rem; padding: .7rem 1rem; border: 0; color: #683f9f; background: transparent; font-weight: 700; cursor: pointer; }
+
+.co-error { margin: 0.5rem 0; color: #b42332; font-size: 0.88rem; }
+.co-sign-in textarea { width: 100%; box-sizing: border-box; padding: 0.8rem; border: 1px solid #e9e4ee; border-radius: 0.9rem; font: inherit; resize: vertical; }
+.co-sign-in > p { margin: 0 0 1rem; color: #746e7c; line-height: 1.5; }
