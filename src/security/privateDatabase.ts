@@ -23,6 +23,9 @@ export type RelayDelivery = {
   lastError?: string
 }
 
+/** One chat message, encrypted to the account's own key (NIP-44), so it is unreadable while locked. */
+export type StoredMessage = { id: string; createdAt: number; ciphertext: string }
+
 export type OutboxRecord = {
   id: string
   event: NostrEvent
@@ -35,19 +38,26 @@ interface ResiliencePrivateDatabase extends DBSchema {
   keys: { key: string; value: CryptoKey }
   outbox: { key: string; value: OutboxRecord; indexes: { 'by-created': number } }
   seen: { key: string; value: { id: string; seenAt: number }; indexes: { 'by-seen': number } }
+  messages: { key: string; value: StoredMessage; indexes: { 'by-created': number } }
 }
 
 let databasePromise: Promise<IDBPDatabase<ResiliencePrivateDatabase>> | undefined
 
 export const privateDatabase = () => {
-  databasePromise ??= openDB<ResiliencePrivateDatabase>('resilience-private', 1, {
-    upgrade(database) {
-      database.createObjectStore('vault', { keyPath: 'id' })
-      database.createObjectStore('keys')
-      const outbox = database.createObjectStore('outbox', { keyPath: 'id' })
-      outbox.createIndex('by-created', 'createdAt')
-      const seen = database.createObjectStore('seen', { keyPath: 'id' })
-      seen.createIndex('by-seen', 'seenAt')
+  databasePromise ??= openDB<ResiliencePrivateDatabase>('resilience-private', 2, {
+    upgrade(database, oldVersion) {
+      if (oldVersion < 1) {
+        database.createObjectStore('vault', { keyPath: 'id' })
+        database.createObjectStore('keys')
+        const outbox = database.createObjectStore('outbox', { keyPath: 'id' })
+        outbox.createIndex('by-created', 'createdAt')
+        const seen = database.createObjectStore('seen', { keyPath: 'id' })
+        seen.createIndex('by-seen', 'seenAt')
+      }
+      if (oldVersion < 2) {
+        const messages = database.createObjectStore('messages', { keyPath: 'id' })
+        messages.createIndex('by-created', 'createdAt')
+      }
     },
   })
   return databasePromise

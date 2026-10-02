@@ -37,6 +37,22 @@ signatures in the browser (`src/support/directory.ts`). If a list fails the chec
 show as **Not verified**. Profile pictures are never loaded, because loading an image would give
 the image's host the survivor's IP address.
 
+## Private messages
+
+Survivors and counselors message each other through the Nostr relays, not through the API. Messages
+are encrypted on the phone (NIP-17) and only the two people in the conversation can read them.
+
+Chat needs two things from the backend:
+
+- `VITE_PLATFORM_PUBKEY` in `.env.local`, set to `PLATFORM_PUBKEY` from `backend/.env`. The app
+  uses it to check the signature on `GET /v1/config`, which lists the relays.
+- At least two relays in that signed configuration. The app refuses to start chat with fewer.
+
+The survivor's key is locked with her PIN and only held in memory, so each chat screen asks for the
+PIN after a page load. A counselor signs in at `/counselor/sign-in` with the 12 backup words of the
+key her organisation verified. Conversations are saved on the phone encrypted to the account's own
+key. A guest's conversation lasts only while the chat screen is open.
+
 ## Available commands
 
 - `npm run dev` starts the development server.

@@ -4,6 +4,8 @@
 interface ImportMetaEnv {
   /** Base URL of the Resilience API, for example http://localhost:8000. */
   readonly VITE_API_BASE?: string
+  /** Hex public key that signs the client configuration (PLATFORM_PUBKEY in the backend .env). */
+  readonly VITE_PLATFORM_PUBKEY?: string
 }
 
 interface ImportMeta {

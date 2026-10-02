@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import './support.css'
+import { conversationIdFor } from '../messaging/chat'
+import { ChatNotice, PinUnlock } from '../messaging/ChatParts'
+import { statusLabel as deliveryLabel } from '../messaging/labels'
+import { useMessenger } from '../messaging/useMessenger'
 import {
+  chatPath,
   displayName,
   loadCounselor,
   loadDirectory,
+  parseChatPath,
   parseProfilePath,
   profilePath,
   type Counselor,
@@ -132,23 +138,8 @@ function Profile({ guest, orgId, pubkey }: { guest: boolean; orgId: string; pubk
   const counselor = loaded.value
   const name = displayName(counselor)
   const profile = counselor.profile
-  return <div className="support-screen"><Header title={name} guest={guest} back={back} verified={counselor.status === 'verified'} /><main className="profile"><span className="profile-avatar" aria-hidden="true">{name.charAt(0).toUpperCase()}</span><h1>{name}</h1>{profile?.responseTime && <p>{profile.responseTime}</p>}{profile && profile.specialties.length > 0 && <div className="profile-tags">{profile.specialties.map((tag) => <span key={tag}>{tag}</span>)}</div>}{profile?.about && <p className="profile-about">{profile.about}</p>}{profile && profile.languages.length > 0 && <p className="profile-languages">Speaks {profile.languages.join(', ')}</p>}<VerificationCard counselor={counselor} /></main><button className="support-primary profile-start" type="button" onClick={() => go('/app/chat/grace', guest)}>Start a private conversation</button><BottomNav guest={guest} /></div>
+  return <div className="support-screen"><Header title={name} guest={guest} back={back} verified={counselor.status === 'verified'} /><main className="profile"><span className="profile-avatar" aria-hidden="true">{name.charAt(0).toUpperCase()}</span><h1>{name}</h1>{profile?.responseTime && <p>{profile.responseTime}</p>}{profile && profile.specialties.length > 0 && <div className="profile-tags">{profile.specialties.map((tag) => <span key={tag}>{tag}</span>)}</div>}{profile?.about && <p className="profile-about">{profile.about}</p>}{profile && profile.languages.length > 0 && <p className="profile-languages">Speaks {profile.languages.join(', ')}</p>}<VerificationCard counselor={counselor} /></main><button className="support-primary profile-start" type="button" onClick={() => go(chatPath(orgId, pubkey), guest)}>Start a private conversation</button><BottomNav guest={guest} /></div>
 }
-
-type Message = { from: 'them' | 'me'; text: string; status?: string }
-const accountMessages: Message[] = [
-  { from: 'them', text: "Hello, thank you for reaching out. Take your time. I'm here to listen." },
-  { from: 'me', text: 'I need some advice on emergency shelter options.', status: 'Sent' },
-  { from: 'me', text: 'Is there a safe place near CBD where I can stay tonight?', status: 'Sending' },
-  { from: 'them', text: 'Let me check the available shelter spaces for you right now.' },
-  { from: 'me', text: 'Thank you. I am waiting.', status: 'Waiting for connection' },
-  { from: 'me', text: 'Will it be confidential?', status: 'Failed: tap to retry' },
-]
-const guestMessages: Message[] = [
-  { from: 'them', text: 'Hello, welcome to Resilience. How can I help you today?' },
-  { from: 'me', text: 'I need someone to talk to', status: 'Sent' },
-  { from: 'them', text: "I'm here for you. You're not alone." },
-]
 
 function KeepConversation({ close, leave }: { close: () => void; leave: () => void }) {
   return <><button className="support-backdrop" type="button" onClick={close} aria-label="Close prompt" /><section className="keep-sheet" role="dialog" aria-modal="true"><span className="sheet-handle" /><span className="keep-icon"><Icon name="chat" size={30} /></span><h2>Keep this conversation?</h2><p>If you create an account, this conversation will be saved. Without an account, it will be cleared when you leave.</p><button className="support-primary" type="button" onClick={() => window.location.assign('/onboarding/create')}>Create an account to keep it</button><button className="support-secondary" type="button" onClick={leave}>Leave and clear</button><button className="support-link" type="button" onClick={close}>Stay</button></section></>
@@ -158,14 +149,56 @@ function ChatMenu({ close, report, clear }: { close: () => void; report: () => v
   return <><button className="chat-menu-backdrop" type="button" onClick={close} aria-label="Close conversation menu" /><div className="chat-menu" role="menu"><button className="danger" type="button"><Icon name="block" size={18} />Block</button><button type="button" onClick={report}><Icon name="report" size={18} />Report</button><button type="button" onClick={clear}><Icon name="trash" size={18} />Clear this conversation<br />from my phone</button></div></>
 }
 
-function Chat({ guest }: { guest: boolean }) {
-  const [messages, setMessages] = useState(guest ? guestMessages : accountMessages)
+// A private conversation with one counselor. Her key comes from the verified directory, never from
+// a name, and a counselor who is no longer verified can't be sent new messages.
+function Chat({ guest, orgId, pubkey }: { guest: boolean; orgId: string; pubkey: string }) {
+  const [attempt, setAttempt] = useState(0)
+  const loaded = useLoad((signal) => loadCounselor(orgId, pubkey, signal), attempt, `${orgId}/${pubkey}`)
+  const chat = useMessenger('survivor', guest)
   const [draft, setDraft] = useState('')
+  const [sendError, setSendError] = useState('')
   const [menu, setMenu] = useState(false)
   const [keepPrompt, setKeepPrompt] = useState(false)
-  const back = () => guest ? setKeepPrompt(true) : go('/app/counselors', false)
-  const send = () => { if (!draft.trim()) return; setMessages((current) => [...current, { from: 'me', text: draft.trim(), status: navigator.onLine ? 'Sent' : 'Waiting for connection' }]); setDraft('') }
-  return <div className="support-screen chat-screen"><Header title="Grace" guest={guest} back={back} chatMenu={() => setMenu((open) => !open)} verified />{guest ? <div className="chat-notice">This conversation is cleared when you leave.<button onClick={() => window.location.assign('/onboarding/create')}>Create an account to keep it</button></div> : !navigator.onLine && <div className="chat-notice">You’re offline. Messages will send when you’re connected.</div>}<main className="messages">{messages.map((message, index) => <div className={`message-row ${message.from}`} key={`${message.text}-${index}`}><p>{message.text}</p>{message.status && <small className={message.status.startsWith('Failed') ? 'failed' : ''}>{message.status}</small>}</div>)}</main><form className="composer" onSubmit={(event) => { event.preventDefault(); send() }}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={guest ? 'Type a message…' : 'Write a message…'} aria-label="Message" /><button type="submit" aria-label="Send message"><Icon name="send" size={20} /></button></form><BottomNav guest={guest} active="messages" />{menu && <ChatMenu close={() => setMenu(false)} report={() => go('/app/report', guest)} clear={() => { setMessages([]); setMenu(false) }} />}{keepPrompt && <KeepConversation close={() => setKeepPrompt(false)} leave={() => go('/app', true)} />}</div>
+  const counselor = loaded.state === 'ready' ? loaded.value : null
+  const name = counselor ? displayName(counselor) : 'Counselor'
+  const verified = counselor?.status === 'verified'
+  const conversationId = chat.state.kind === 'ready' ? conversationIdFor(chat.state.identity.publicKey, pubkey) : ''
+  const thread = chat.messages.filter((message) => message.conversationId === conversationId)
+  const back = () => guest && thread.length ? setKeepPrompt(true) : go('/app/counselors', guest)
+  const send = async () => {
+    if (!draft.trim() || !chat.messenger || !verified) return
+    setSendError('')
+    const text = draft
+    setDraft('')
+    try {
+      await chat.messenger.send(pubkey, name, text, orgId)
+    } catch {
+      setDraft(text)
+      setSendError('That message couldn’t be sent. Try again.')
+    }
+  }
+
+  let body: React.ReactNode
+  if (loaded.state === 'loading') body = <p className="directory-message">Loading…</p>
+  else if (loaded.state === 'error') body = <LoadProblem retry={() => setAttempt((n) => n + 1)} />
+  else if (!counselor) body = <p className="directory-message">This counselor is no longer listed by this organisation.</p>
+  else if (chat.state.kind === 'starting' || chat.state.kind === 'connecting') body = <p className="directory-message">Connecting securely…</p>
+  else if (chat.state.kind === 'no-account') body = <ChatNotice action={{ label: 'Continue without an account', run: () => go(chatPath(orgId, pubkey), true) }}>There’s no account on this phone. You can talk without one: the conversation is cleared when you leave.</ChatNotice>
+  else if (chat.state.kind === 'locked') body = <PinUnlock title={`Welcome back, ${chat.state.nickname}`} text={`Enter your PIN to talk with ${name}.`} unlock={chat.unlock} />
+  else if (chat.state.kind === 'error') body = <ChatNotice action={{ label: 'Try again', run: () => void chat.retry() }}>{chat.state.message}</ChatNotice>
+  else body = <main className="messages">{thread.length === 0 && <p className="directory-message">Say hello when you’re ready. Only {name} can read what you write.</p>}{thread.map((message) => <div className={`message-row ${message.fromMe ? 'me' : 'them'}`} key={message.id}><p>{message.text}</p>{message.fromMe && <small>{deliveryLabel(message)}</small>}</div>)}</main>
+
+  const ready = chat.state.kind === 'ready'
+  return <div className="support-screen chat-screen"><Header title={name} guest={guest} back={back} chatMenu={ready ? () => setMenu((open) => !open) : undefined} verified={verified} />
+    {counselor && !verified && <div className="chat-notice">{name} is no longer verified by {counselor.orgName}, so you can’t send new messages. Be careful sharing personal details.</div>}
+    {verified && ready && (guest ? <div className="chat-notice">This conversation is cleared when you leave.<button onClick={() => window.location.assign('/onboarding/create')}>Create an account to keep it</button></div> : !navigator.onLine && <div className="chat-notice">You’re offline. Messages will send when you’re connected.</div>)}
+    {body}
+    {sendError && <p className="chat-send-error" role="alert">{sendError}</p>}
+    {ready && verified && <form className="composer" onSubmit={(event) => { event.preventDefault(); void send() }}><input value={draft} maxLength={2000} onChange={(event) => setDraft(event.target.value)} placeholder={guest ? 'Type a message…' : 'Write a message…'} aria-label="Message" /><button type="submit" aria-label="Send message" disabled={!draft.trim()}><Icon name="send" size={20} /></button></form>}
+    <BottomNav guest={guest} active="messages" />
+    {menu && <ChatMenu close={() => setMenu(false)} report={() => go('/app/report', guest)} clear={() => { void chat.messenger?.clearConversation(conversationId); setMenu(false) }} />}
+    {keepPrompt && <KeepConversation close={() => setKeepPrompt(false)} leave={() => go('/app', true)} />}
+  </div>
 }
 
 const reasons = ['Harassment', 'Asking for personal details', 'Pretending to be someone else', 'Spam', 'Something else']
@@ -173,7 +206,7 @@ const reasons = ['Harassment', 'Asking for personal details', 'Pretending to be 
 function Report({ guest }: { guest: boolean }) {
   const [reason, setReason] = useState('Asking for personal details')
   const [attach, setAttach] = useState(false)
-  return <div className="support-screen report-screen"><Header title="Report" guest={guest} back={() => go('/app/chat/grace', guest)} /><main className="report-content"><h2>Step 1: Choose a reason</h2><div className="reason-list">{reasons.map((item) => <label className={reason === item ? 'selected' : ''} key={item}><input type="radio" name="reason" value={item} checked={reason === item} onChange={() => setReason(item)} /><span />{item}</label>)}</div><h2>Step 2: Attach this message</h2><label className="share-toggle"><strong>Share last 5 messages</strong><input type="checkbox" checked={attach} onChange={(event) => setAttach(event.target.checked)} /><span /></label><p>The group leader will see only what you choose to share.</p></main><button className="support-primary send-report" type="button">Send report</button></div>
+  return <div className="support-screen report-screen"><Header title="Report" guest={guest} back={() => window.history.back()} /><main className="report-content"><h2>Step 1: Choose a reason</h2><div className="reason-list">{reasons.map((item) => <label className={reason === item ? 'selected' : ''} key={item}><input type="radio" name="reason" value={item} checked={reason === item} onChange={() => setReason(item)} /><span />{item}</label>)}</div><h2>Step 2: Attach this message</h2><label className="share-toggle"><strong>Share last 5 messages</strong><input type="checkbox" checked={attach} onChange={(event) => setAttach(event.target.checked)} /><span /></label><p>The group leader will see only what you choose to share.</p></main><button className="support-primary send-report" type="button">Send report</button></div>
 }
 
 export default function Support() {
@@ -181,7 +214,8 @@ export default function Support() {
   const path = window.location.pathname
   const profile = parseProfilePath(path)
   if (profile) return <Profile guest={guest} orgId={profile.orgId} pubkey={profile.pubkey} />
-  if (path === '/app/chat/grace') return <Chat guest={guest} />
+  const chat = parseChatPath(path)
+  if (chat) return <Chat guest={guest} orgId={chat.orgId} pubkey={chat.pubkey} key={path} />
   if (path === '/app/report') return <Report guest={guest} />
   return <Directory guest={guest} />
 }

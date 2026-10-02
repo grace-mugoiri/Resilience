@@ -1,4 +1,9 @@
 import { useState } from 'react'
+import { conversationsOf } from '../messaging/chat'
+import { PinUnlock } from '../messaging/ChatParts'
+import { timeLabel } from '../messaging/labels'
+import { useMessenger } from '../messaging/useMessenger'
+import { chatPath } from '../support/directory'
 import './messages.css'
 
 type Filter = 'All' | 'Circle' | 'Groups'
@@ -22,7 +27,6 @@ function Nav() { return <nav className="messages-nav"><a href={withMode('/app')}
 
 type Conversation = { name: string; preview: string; time: string; type: Exclude<Filter, 'All'> | 'Counselor'; unread?: boolean; verified?: boolean; route: string }
 const conversations: Conversation[] = [
-  { name: 'Grace', preview: 'Let me check the available shelter spaces…', time: '2m', type: 'Counselor', unread: true, verified: true, route: '/app/chat/grace' },
   { name: 'River', preview: 'Did you manage to reach the organization?', time: '1h', type: 'Groups', unread: true, route: '/app/groups/healing/chat' },
   { name: 'Healing after abuse', preview: 'Grace: Please remember not to share the exact…', time: '3h', type: 'Groups', route: '/app/groups/healing/chat' },
   { name: 'Healing after abuse', preview: 'Your request was accepted', time: 'Just now', type: 'Groups', route: '/app/groups/healing/chat' },
@@ -39,9 +43,21 @@ function Inbox() {
   const [filter, setFilter] = useState<Filter>('All')
   const unresolvedCount = requestData.filter((request) => !sessionStorage.getItem(`message-request-${request.name}`)).length
   const accepted = requestData.filter((request) => sessionStorage.getItem(`message-request-${request.name}`) === 'accepted').map<Conversation>((request) => ({ name: request.name, preview: request.text, time: 'Just now', type: 'Groups', unread: true, route: '/app/messages' }))
-  const available = guest() ? conversations.filter((item) => item.name === 'Grace') : [...accepted, ...conversations]
+  // Real conversations with counselors. A guest's key only lives on the chat screen, so a guest has none here.
+  const chat = useMessenger('survivor', guest())
+  const counselorChats = chat.state.kind === 'ready' && !guest()
+    ? conversationsOf(chat.messages).filter((item) => item.orgId).map<Conversation>((item) => ({
+      name: item.peerName,
+      preview: `${item.last.fromMe ? 'You: ' : ''}${item.last.text}`,
+      time: timeLabel(item.last.createdAt),
+      type: 'Counselor',
+      unread: !item.last.fromMe,
+      route: chatPath(item.orgId!, item.peer),
+    }))
+    : []
+  const available = guest() ? [] : [...counselorChats, ...accepted, ...conversations]
   const shown = filter === 'All' ? available : available.filter((item) => item.type === filter)
-  return <div className="messages-screen"><header className="messages-header"><h1>Messages</h1><Exit /></header>{!guest() && <div className="message-filters">{(['All', 'Circle', 'Groups'] as Filter[]).map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item}</button>)}<button className="requests-tab" onClick={() => go('/app/messages/requests')}>Requests{unresolvedCount > 0 && <span>{unresolvedCount}</span>}</button></div>}<p className="preview-privacy"><Icon name="hidden" size={18} />Message previews are hidden on your lock screen.</p><main className="inbox-list">{shown.map((conversation, index) => <button onClick={() => go(conversation.route)} key={`${conversation.name}-${index}`}><span className="inbox-avatar">{conversation.name.charAt(0)}</span><span className="inbox-copy"><strong>{conversation.name}{conversation.verified && <span className="verified-mark">✓</span>}</strong><span>{conversation.preview}</span></span><span className="inbox-meta">{conversation.time}{conversation.unread && <i />}</span></button>)}</main><Nav /></div>
+  return <div className="messages-screen"><header className="messages-header"><h1>Messages</h1><Exit /></header>{!guest() && <div className="message-filters">{(['All', 'Circle', 'Groups'] as Filter[]).map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item}</button>)}<button className="requests-tab" onClick={() => go('/app/messages/requests')}>Requests{unresolvedCount > 0 && <span>{unresolvedCount}</span>}</button></div>}<p className="preview-privacy"><Icon name="hidden" size={18} />Message previews are hidden on your lock screen.</p>{chat.state.kind === 'locked' && <PinUnlock title={`Welcome back, ${chat.state.nickname}`} text="Enter your PIN to see your conversations with counselors." unlock={chat.unlock} />}{chat.state.kind === 'error' && <p className="chat-empty">{chat.state.message}</p>}{guest() && <p className="chat-empty">Without an account, a conversation only lasts while it’s open. Create an account to keep your conversations.</p>}<main className="inbox-list">{shown.map((conversation, index) => <button onClick={() => go(conversation.route)} key={`${conversation.name}-${index}`}><span className="inbox-avatar">{conversation.name.charAt(0)}</span><span className="inbox-copy"><strong>{conversation.name}{conversation.verified && <span className="verified-mark">✓</span>}</strong><span>{conversation.preview}</span></span><span className="inbox-meta">{conversation.time}{conversation.unread && <i />}</span></button>)}</main><Nav /></div>
 }
 
 function Requests() {

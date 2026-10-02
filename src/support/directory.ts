@@ -208,6 +208,15 @@ export function profilePath(counselor: Counselor): string {
   return `/app/counselors/${counselor.orgId}/${counselor.pubkey}`
 }
 
+export function chatPath(orgId: string, pubkey: string): string {
+  return `/app/chat/${orgId}/${pubkey}`
+}
+
+export function parseChatPath(path: string): { orgId: string; pubkey: string } | null {
+  const match = /^\/app\/chat\/([0-9a-f-]{36})\/([0-9a-f]{64})\/?$/.exec(path)
+  return match ? { orgId: match[1], pubkey: match[2] } : null
+}
+
 export function parseProfilePath(path: string): { orgId: string; pubkey: string } | null {
   const match = /^\/app\/counselors\/([0-9a-f-]{36})\/([0-9a-f]{64})\/?$/.exec(path)
   return match ? { orgId: match[1], pubkey: match[2] } : null
