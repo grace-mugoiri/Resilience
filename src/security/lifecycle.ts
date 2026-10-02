@@ -2,6 +2,9 @@ import { accountVault } from './vault'
 
 let installed = false
 let inactivityTimer: number | undefined
+// True while the page is being left on purpose (a link or location change). Browsers also report
+// the page as hidden while it unloads, and that must not be mistaken for switching away.
+let leaving = false
 
 const armInactivityTimer = () => {
   if (!window.location.pathname.startsWith('/app')) return
@@ -34,9 +37,16 @@ export const installSafetyLifecycle = () => {
     true,
   )
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && window.location.pathname.startsWith('/app')) safeExit()
+    if (document.hidden && !leaving && window.location.pathname.startsWith('/app')) safeExit()
   })
-  window.addEventListener('pagehide', () => accountVault.lock())
+  window.addEventListener('pagehide', () => {
+    leaving = true
+    accountVault.lock()
+  })
+  // A page restored from the back/forward cache is live again.
+  window.addEventListener('pageshow', () => {
+    leaving = false
+  })
   armInactivityTimer()
 }
 
