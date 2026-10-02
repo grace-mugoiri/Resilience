@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     nip98_window_seconds: int = 60
     sensitive_challenge_seconds: int = 120
     relay_policy_hmac_key: str = "dev-only-change-me"
+    counselor_invite_hmac_key: str = "dev-only-invite-key-change-me"
     relay_policy_port: int = 50051
     guest_event_max_seconds: int = 300
     account_event_max_seconds: int = 30 * 24 * 60 * 60
@@ -58,13 +59,13 @@ class Settings(BaseSettings):
     def strip_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
-    @field_validator("relay_policy_hmac_key")
+    @field_validator("relay_policy_hmac_key", "counselor_invite_hmac_key")
     @classmethod
     def strong_policy_key(cls, v: str, info) -> str:
         # Tests and local development deliberately use a documented throwaway value.
         app_env = info.data.get("app_env", "dev")
         if app_env == "production" and len(v.encode()) < 32:
-            raise ValueError("RELAY_POLICY_HMAC_KEY must be at least 32 bytes in production")
+            raise ValueError(f"{info.field_name.upper()} must be at least 32 bytes in production")
         return v
 
     @field_validator("disbursement_approval_threshold")

@@ -17,6 +17,8 @@
   and emergency revocation events are stored and returned for client verification.
 - Organization applications explicitly consent to a public counselor directory; the privacy
   implications of kind 30000 `p` tags are documented.
+- Single-use, hashed counselor invitations; counselor-signed onboarding profiles; NIP-44 v2
+  encrypted credential submission; organization review states; and roster-gated activation.
 - CORS allows the Vite web client (`http://localhost:5173`) in the local example settings.
 - Background cleanup of expired NIP-98 replay records.
 - Nostr relay configuration with NIP-42 authentication, recipient-only delivery for gift-wrapped
@@ -34,20 +36,22 @@
 | `GET /v1/orgs/{id}/counsellors` | None | Implemented |
 | `PUT /v1/orgs/{id}/roster` | Signed roster event | Implemented |
 | `PUT /v1/orgs/{id}/counsellors/{pubkey}/profile` | Counsellor's signed kind 0 event | Implemented |
+| `POST /v1/orgs/{id}/counselor-invites` | `verification` key + challenge | Implemented |
+| `POST /v1/counselor-enrollments/claim` | Counselor NIP-98 key | Implemented |
+| `PUT /v1/counselor-enrollments/{id}/credentials` | Counselor + challenge | Implemented |
+| `GET /v1/orgs/{id}/counselor-enrollments` | `verification` key | Implemented |
+| `/v1/orgs/{id}/counselor-enrollments/{application}/{decision}` | `verification` key + challenge | Implemented |
 | `GET /v1/admin/orgs` | Platform admin NIP-98 key | Implemented |
 | `POST /v1/admin/orgs/{id}/approve` | Platform admin NIP-98 key | Implemented |
 | `POST /v1/admin/orgs/{id}/suspend` | Platform admin NIP-98 key | Implemented |
-| `/v1/disbursements` routes | Not implemented | Planned |
+| `/v1/disbursements` routes | Scoped NIP-98 + multi-party approval | Implemented |
 
 ## Current limitations
 
 - Counsellor rosters and profiles are submitted to the API; automatic relay-to-database
   synchronization is not implemented.
-- The client-side verification flow for the platform-signed approved-organisation list is not
-  implemented.
-- Lightning disbursement endpoints and payment-provider integration are not implemented.
-- Relay configuration has no event-kind allowlist yet. NIP-42 authentication applies to direct
-  messages, while other event kinds may still be published.
+- Credential ciphertext is stored in PostgreSQL for the MVP rather than dedicated object storage.
+- A real credential reviewer dashboard and external payment-provider settlement are not included.
 - Production TLS, public hostnames, and deployment configuration are not included in the local
   Compose setup.
 

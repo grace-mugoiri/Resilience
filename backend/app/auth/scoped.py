@@ -23,7 +23,9 @@ Db = Annotated[Session, Depends(get_db)]
 SCOPE_PATTERN = re.compile(
     r"^(admin:org:(approve|suspend):[0-9a-f-]{36}"
     r"|disbursement:(create|approve):[0-9a-f-]{36}"
-    r"|group:(create|member):[0-9a-f-]{36})$"
+    r"|group:(create|member):[0-9a-f-]{36}"
+    r"|counselor:(invite|review):[0-9a-f-]{36}"
+    r"|counselor:credentials:[0-9a-f-]{36})$"
 )
 
 
