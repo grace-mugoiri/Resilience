@@ -1,5 +1,6 @@
-import { finalizeEvent, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
+import { finalizeEvent, getPublicKey, type EventTemplate, type NostrEvent } from 'nostr-tools/pure'
 import { SimplePool } from 'nostr-tools/pool'
+import { normalizeURL } from 'nostr-tools/utils'
 import type { SubCloser } from 'nostr-tools/abstract-pool'
 import { createGiftWraps, openGiftWrap, type OpenedMessage, type ResiliencePayload } from './envelope'
 import { MessagingRepository } from './repository'
@@ -14,6 +15,12 @@ export class RelayMessagingClient {
   private subscription?: SubCloser
   private retryTimer?: number
   private onlineListener = () => void this.flushOutbox()
+  // Bumped on every start/stop so a slow login can't open a subscription after stop().
+  private generation = 0
+  // Called when a relay has sent its NIP-42 challenge and we have signed the answer.
+  private readonly challenged = new Map<string, () => void>()
+  private readonly signAuth = async (template: EventTemplate) =>
+    this.withPrivateKey((privateKey) => finalizeEvent(template, privateKey))
 
   constructor(
     private readonly relays: string[],
@@ -22,7 +29,37 @@ export class RelayMessagingClient {
   ) {
     if (new Set(relays).size < 2) throw new Error('At least two distinct relays are required')
     this.repository = repository
+    // Our relays (nostr-rs-relay with nip42_dms) only serve gift wraps to a logged-in recipient,
+    // and they never ask twice: they send one AUTH challenge on connect and then silently leave
+    // gift wraps out of every answer. So answer the challenge as soon as it arrives, on every
+    // connection and reconnection, instead of waiting for an "auth-required" that never comes.
     this.pool = new SimplePool({ enableReconnect: true })
+    // SimplePool's constructor type doesn't list this option, but the pool reads the property.
+    this.pool.automaticallyAuth = (url: string) => async (template: EventTemplate) => {
+      const signed = await this.signAuth(template)
+      this.challenged.get(url)?.()
+      return signed
+    }
+  }
+
+  /** Connects to each relay and waits until it has accepted our login, or gives up after a few seconds. */
+  private async authenticate() {
+    await Promise.allSettled(
+      this.relays.map(async (relayUrl) => {
+        const url = normalizeURL(relayUrl)
+        const challenged = new Promise<boolean>((resolve) => {
+          this.challenged.set(url, () => resolve(true))
+          window.setTimeout(() => resolve(false), 3000)
+        })
+        try {
+          const relay = await this.pool.ensureRelay(url, { connectionTimeout: 5000 })
+          // auth() returns the login already in flight, and resolves when the relay says OK.
+          if (await challenged) await relay.auth(this.signAuth)
+        } finally {
+          this.challenged.delete(url)
+        }
+      }),
+    )
   }
 
   private publicKey() {
@@ -64,8 +101,27 @@ export class RelayMessagingClient {
 
   start(onMessage: MessageHandler, onInvalid?: InvalidHandler) {
     this.stop()
+    const generation = this.generation
     const publicKey = this.publicKey()
     const seenInSession = new Set<string>()
+    // Subscribe only after logging in. A relay answers a subscription once, with what this
+    // connection may see at that moment, so subscribing first would miss stored messages.
+    void this.authenticate().then(() => {
+      if (generation !== this.generation) return
+      this.subscribe(publicKey, seenInSession, onMessage, onInvalid)
+    })
+    window.addEventListener('online', this.onlineListener)
+    this.retryTimer = window.setInterval(() => void this.flushOutbox(), 15_000)
+    void this.repository.purgeSeen()
+    void this.flushOutbox()
+  }
+
+  private subscribe(
+    publicKey: string,
+    seenInSession: Set<string>,
+    onMessage: MessageHandler,
+    onInvalid?: InvalidHandler,
+  ) {
     this.subscription = this.pool.subscribeMany(
       this.relays,
       { kinds: [1059], '#p': [publicKey], since: Math.floor(Date.now() / 1000) - 8 * 24 * 60 * 60 },
@@ -87,13 +143,10 @@ export class RelayMessagingClient {
         oninvalidevent: (event) => onInvalid?.(event, new Error('Invalid Nostr signature')),
       },
     )
-    window.addEventListener('online', this.onlineListener)
-    this.retryTimer = window.setInterval(() => void this.flushOutbox(), 15_000)
-    void this.repository.purgeSeen()
-    void this.flushOutbox()
   }
 
   stop() {
+    this.generation += 1
     this.subscription?.close('client stopped')
     this.subscription = undefined
     window.removeEventListener('online', this.onlineListener)
