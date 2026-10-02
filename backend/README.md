@@ -2,6 +2,9 @@
 
 FastAPI API, PostgreSQL database, background worker, and Nostr relay.
 
+For the complete start-up, API, relay, testing, and troubleshooting guide, see
+[`docs/backend/RUNBOOK.md`](../docs/backend/RUNBOOK.md).
+
 ## Requirements
 
 - Python 3.11 or newer
@@ -142,8 +145,73 @@ pytest -v
 ## Test signing helpers
 
 `scripts/nostr_dev.py` provides development-only helpers for creating Nostr test keys, NIP-98
-headers, NIP-05 test files, signed counsellor rosters, and signed counsellor profiles. Use only
-throwaway secret keys with this script. Run `python scripts/nostr_dev.py --help` for usage.
+headers, NIP-05 test files, operational-key authorizations/revocations, signed counsellor rosters,
+and signed counsellor profiles. Use only throwaway secret keys with this script. Run
+`python scripts/nostr_dev.py --help` for usage.
+
+### Organization key hierarchy
+
+The NIP-05 organization identity is the **offline root key**. Keep its secret offline after the
+organization applies. It does not sign routine rosters. Instead it signs:
+
+- kind `30382` authorization events for online operational keys, including `p`, `scope`,
+  `valid_from`, and NIP-40 `expiration` tags;
+- kind `30383` emergency revocations for a compromised operational key.
+
+An authorized operational key with `roster` scope signs the kind `30000` counselor roster. To
+rotate, authorize a fresh operational key with the root, switch roster signing to it, and revoke
+the old key. Revocation is fail-closed: no later roster submission from that key is accepted,
+including a roster whose timestamp predates the revocation.
+
+The client directory response includes both the roster and its root-signed key authorization, so
+clients can verify `root -> operational key -> roster` without trusting the API. If that key is
+revoked, every counsellor attestation produced by it immediately becomes `removed`, and the
+response includes the root-signed cancellation as `roster_key_revocation`.
+
+### Sensitive approval commands
+
+Approval and suspension calls use a short-lived, one-use server challenge in addition to NIP-98.
+With `ADMIN_SEC`, `ORG_ID`, and `API` set, approve an organization like this:
+
+```bash
+SCOPE="admin:org:approve:$ORG_ID"
+BODY=$(jq -nc --arg scope "$SCOPE" '{scope:$scope}')
+AUTH=$(python scripts/nostr_dev.py auth --sec "$ADMIN_SEC" \
+  --url "$API/v1/auth/challenges" --method POST --data "$BODY")
+CHALLENGE=$(curl -fsS -X POST -H "Authorization: $AUTH" \
+  -H 'Content-Type: application/json' --data "$BODY" \
+  "$API/v1/auth/challenges" | jq -r .challenge)
+APPROVE_AUTH=$(python scripts/nostr_dev.py auth --sec "$ADMIN_SEC" \
+  --url "$API/v1/admin/orgs/$ORG_ID/approve" --method POST --data '' \
+  --scope "$SCOPE" --challenge "$CHALLENGE")
+curl -fsS -X POST -H "Authorization: $APPROVE_AUTH" --data '' \
+  "$API/v1/admin/orgs/$ORG_ID/approve" | jq
+```
+
+Disbursement approval uses the same sequence with a `payments`-scoped operational key:
+
+```bash
+SCOPE="disbursement:approve:$DISBURSEMENT_ID"
+BODY=$(jq -nc --arg scope "$SCOPE" '{scope:$scope}')
+AUTH=$(python scripts/nostr_dev.py auth --sec "$PAYMENTS_SEC" \
+  --url "$API/v1/auth/challenges" --method POST --data "$BODY")
+CHALLENGE=$(curl -fsS -X POST -H "Authorization: $AUTH" \
+  -H 'Content-Type: application/json' --data "$BODY" \
+  "$API/v1/auth/challenges" | jq -r .challenge)
+APPROVE_AUTH=$(python scripts/nostr_dev.py auth --sec "$PAYMENTS_SEC" \
+  --url "$API/v1/disbursements/$DISBURSEMENT_ID/approve" --method POST --data '' \
+  --scope "$SCOPE" --challenge "$CHALLENGE")
+curl -fsS -X POST -H "Authorization: $APPROVE_AUTH" --data '' \
+  "$API/v1/disbursements/$DISBURSEMENT_ID/approve" | jq
+```
+
+### Counselor-directory privacy
+
+The current MVP implements public counselor discovery. Organization applications must explicitly
+send `"directory_visibility": "public"`. A public kind `30000` roster exposes each counselor
+association through its `p` tags if the event is published to a normal relay. Do not publish it
+under the assumption that these associations are private. A future private-directory mode needs
+encrypted, access-controlled discovery and is intentionally not simulated by a misleading flag.
 
 For example, to give a counsellor on an approved organisation's roster a profile:
 

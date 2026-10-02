@@ -88,6 +88,7 @@ async def require_nostr_auth(
     ):
         raise _reject("event already used")
 
+    request.state.nostr_event = event
     return event["pubkey"]
 
 

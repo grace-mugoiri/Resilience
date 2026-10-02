@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     platform_pubkey: str | None = None
     signed_config_path: str = "config/client-config.signed.json"
     nip98_window_seconds: int = 60
+    sensitive_challenge_seconds: int = 120
+    relay_policy_hmac_key: str = "dev-only-change-me"
+    relay_policy_port: int = 50051
+    guest_event_max_seconds: int = 300
+    account_event_max_seconds: int = 30 * 24 * 60 * 60
+    disbursement_approval_threshold: int = 2
     # Hex pubkeys allowed to approve and suspend organisations (comma separated).
     admin_pubkeys: Annotated[list[str], NoDecode] = []
     nip05_timeout_seconds: float = 5.0
@@ -51,6 +57,22 @@ class Settings(BaseSettings):
     @classmethod
     def strip_slash(cls, v: str) -> str:
         return v.rstrip("/")
+
+    @field_validator("relay_policy_hmac_key")
+    @classmethod
+    def strong_policy_key(cls, v: str, info) -> str:
+        # Tests and local development deliberately use a documented throwaway value.
+        app_env = info.data.get("app_env", "dev")
+        if app_env == "production" and len(v.encode()) < 32:
+            raise ValueError("RELAY_POLICY_HMAC_KEY must be at least 32 bytes in production")
+        return v
+
+    @field_validator("disbursement_approval_threshold")
+    @classmethod
+    def multiparty_threshold(cls, v: int) -> int:
+        if v < 2:
+            raise ValueError("DISBURSEMENT_APPROVAL_THRESHOLD must be at least 2")
+        return v
 
     @field_validator("platform_pubkey", "nip05_dev_base_url", mode="before")
     @classmethod

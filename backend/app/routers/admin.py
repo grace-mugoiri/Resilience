@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.admin import AdminPubkey
+from app.auth.admin import AdminPubkey, require_sensitive_admin
 from app.db.models import Organization
 from app.db.session import get_db
 from app.directory.nip05 import check_nip05
@@ -17,6 +17,8 @@ from app.directory.service import Nip05Fetcher, get_org
 
 router = APIRouter(prefix="/v1/admin/orgs", tags=["admin"])
 Db = Annotated[Session, Depends(get_db)]
+ApproveAdmin = Annotated[str, Depends(require_sensitive_admin("admin:org:approve:{org_id}"))]
+SuspendAdmin = Annotated[str, Depends(require_sensitive_admin("admin:org:suspend:{org_id}"))]
 
 
 @router.get("")
@@ -30,7 +32,7 @@ def list_orgs(
 
 
 @router.post("/{org_id}/approve")
-def approve(org_id: uuid.UUID, _admin: AdminPubkey, db: Db, fetch: Nip05Fetcher) -> OrgOut:
+def approve(org_id: uuid.UUID, _admin: ApproveAdmin, db: Db, fetch: Nip05Fetcher) -> OrgOut:
     """Approves only if the organisation's website vouches for its key right now."""
     org = get_org(db, org_id, lock=True)
     result = check_nip05(org.domain, org.nostr_pubkey, fetch)
@@ -44,7 +46,7 @@ def approve(org_id: uuid.UUID, _admin: AdminPubkey, db: Db, fetch: Nip05Fetcher)
 
 
 @router.post("/{org_id}/suspend")
-def suspend(org_id: uuid.UUID, _admin: AdminPubkey, db: Db) -> OrgOut:
+def suspend(org_id: uuid.UUID, _admin: SuspendAdmin, db: Db) -> OrgOut:
     org = get_org(db, org_id, lock=True)
     org.status = "suspended"
     db.commit()

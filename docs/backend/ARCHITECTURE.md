@@ -115,7 +115,8 @@ A chain of three signatures, each checkable by the client without trusting the s
 platform key ──signs──► approved-orgs list (kind 30000, d=approved-orgs)
                               │  each org also proves its domain with NIP-05
                               ▼
-organisation key ──signs──► verified-counsellors list (kind 30000, d=verified-counsellors)
+offline org root ──signs──► operational-key authorization (kind 30382)
+operational key ──signs──► verified-counsellors list (kind 30000, d=verified-counsellors)
                               ▼
                         counsellor keys
 ```
@@ -132,7 +133,7 @@ organisation key ──signs──► verified-counsellors list (kind 30000, d=v
 
 How it works in the code:
 
-1. **Apply.** `POST /v1/orgs {name, domain}`, NIP-98 signed by the organisation's key. That key
+1. **Apply.** `POST /v1/orgs {name, domain, directory_visibility: "public"}`, NIP-98 signed by the organisation's root key. That key
    becomes its identity; one application per domain and per key. The domain must be a public
    hostname (no IPs, ports, `localhost` or `.local`). Status `pending`, hidden from the public.
 2. **Approve.** An admin (a key in `ADMIN_PUBKEYS`) calls `POST /v1/admin/orgs/{id}/approve`.
@@ -140,12 +141,13 @@ How it works in the code:
    following redirects (NIP-05 forbids them), with a 5-second timeout and a 64 KB cap, and
    refuses domains that resolve to private addresses. Approval only happens if `names._` is the
    organisation's key.
-3. **Roster.** The organisation signs its counsellor list (kind 30000, `d=verified-counsellors`,
-   `p` tags, `expiration` required) and sends it to `PUT /v1/orgs/{id}/roster`. No NIP-98 is
-   needed because the event carries the organisation's own signature. The server refuses events
-   signed by any other key, anything older than the stored roster, and expired or future-dated
-   events. Anyone left off the newest roster is marked inactive.
-4. **Profile.** Each counsellor signs her own public profile, a standard Nostr kind 0 event,
+3. **Operational key.** The offline root signs a time-bounded kind `30382` authorization with the
+   online key in `p`, `scope=roster`, `valid_from`, and `expiration`. Rotation authorizes a fresh
+   key. A kind `30383` root-signed event immediately revokes a compromised key.
+4. **Roster.** The authorized operational key signs the kind 30000 roster. The server refuses
+   unauthorized, expired, or revoked signers, stale rosters, and malformed events. Directory
+   responses include the root-signed authorization so clients can verify the complete chain.
+5. **Profile.** Each counsellor signs her own public profile, a standard Nostr kind 0 event,
    and sends it to `PUT /v1/orgs/{id}/counsellors/{pubkey}/profile`. Like the roster, it needs no
    NIP-98 because the event carries her own signature. The server accepts it only from a
    counsellor on the organisation's current, unexpired roster, refuses any other signer and any
@@ -154,7 +156,7 @@ How it works in the code:
    own from the content: `specialties` and `languages` (lists of short text) and
    `response_time` (for example "Usually replies within a few hours"). Other Nostr clients ignore
    them.
-5. **Read.** `GET /v1/orgs` and `GET /v1/orgs/{id}/counsellors` are public and cacheable for 60
+6. **Read.** `GET /v1/orgs` and `GET /v1/orgs/{id}/counsellors` are public and cacheable for 60
    seconds. The counsellors response carries the organisation (name, domain, NIP-05), the signed
    roster, and every counsellor the organisation has listed, each with a `status`:
    `verified` (on the newest roster, not expired), `expired` (on the newest roster, but the
@@ -164,13 +166,18 @@ How it works in the code:
    client can check both signatures itself. `picture` and `banner` are never returned: loading an
    image URL would give that host the survivor's IP address, so clients must not load them from
    the signed event either.
-6. **Re-check.** Every 6 hours the worker repeats the NIP-05 check. A definite failure (wrong
+7. **Re-check.** Every 6 hours the worker repeats the NIP-05 check. A definite failure (wrong
    key, no file, a redirect) suspends the organisation. A timeout or a 5xx is only logged, so a
    website's bad hour does not take an organisation offline.
 
 Not built yet: the worker pulling rosters and counsellor profiles from the relay by itself (the
 dashboard sends them to the API), and the platform-signed approved-orgs list for clients to
 verify.
+
+The MVP counselor directory is deliberately public. Publishing its kind `30000` event to a normal
+relay exposes the organization-to-counselor associations in `p` tags. Requiring
+`directory_visibility: "public"` makes that decision explicit; private discovery is deferred until
+there is an encrypted, access-controlled design.
 
 ### 5.4 Disbursements: emergency money (next)
 

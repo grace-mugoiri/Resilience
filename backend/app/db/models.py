@@ -20,7 +20,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ORG_STATUSES = ("pending", "approved", "suspended")
+DIRECTORY_VISIBILITIES = ("public",)
 REASON_CODES = ("transport", "pharmacy", "shelter", "food", "other")
+GROUP_MEMBER_ROLES = ("member", "moderator")
 DISBURSEMENT_STATES = (
     "CREATED",
     "INVOICE_ATTACHED",
@@ -42,16 +44,44 @@ class Base(DeclarativeBase):
 
 class Organization(Base):
     __tablename__ = "organizations"
-    __table_args__ = (CheckConstraint(_in("status", ORG_STATUSES), name="ck_org_status"),)
+    __table_args__ = (
+        CheckConstraint(_in("status", ORG_STATUSES), name="ck_org_status"),
+        CheckConstraint(
+            _in("directory_visibility", DIRECTORY_VISIBILITIES),
+            name="ck_org_directory_visibility",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text)
     domain: Mapped[str] = mapped_column(Text, unique=True)
     nostr_pubkey: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
+    directory_visibility: Mapped[str] = mapped_column(
+        Text, default="public", server_default="public"
+    )
     nip05_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     per_payment_cap_sat: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     daily_cap_sat: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrganizationOperationalKey(Base):
+    """A root-authorized online key. The root secret remains offline after authorizing it."""
+
+    __tablename__ = "organization_operational_keys"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    pubkey: Mapped[str] = mapped_column(String(64), primary_key=True)
+    authorization_event_id: Mapped[str] = mapped_column(String(64), unique=True)
+    authorization_event: Mapped[dict] = mapped_column(JSONB)
+    scopes: Mapped[list] = mapped_column(JSONB)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revocation_event: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -77,6 +107,8 @@ class RosterEvent(Base):
 
     event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    signer_pubkey: Mapped[str | None] = mapped_column(String(64))
+    key_authorization_event_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     raw: Mapped[dict] = mapped_column(JSONB)
 
@@ -136,6 +168,52 @@ class DisbursementTransition(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class DisbursementApproval(Base):
+    """One signed approval per distinct actor. The creator's signed request is approval one."""
+
+    __tablename__ = "disbursement_approvals"
+
+    disbursement_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("disbursements.id", ondelete="CASCADE"), primary_key=True
+    )
+    actor_pubkey: Mapped[str] = mapped_column(String(64), primary_key=True)
+    auth_event_id: Mapped[str] = mapped_column(String(64), unique=True)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SupportGroup(Base):
+    """An opaque group identifier. Names and topics remain encrypted in client messages."""
+
+    __tablename__ = "support_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SupportGroupMembership(Base):
+    """HMAC-blinded member identities used only by relay admission policy."""
+
+    __tablename__ = "support_group_memberships"
+    __table_args__ = (
+        CheckConstraint(_in("role", GROUP_MEMBER_ROLES), name="ck_group_member_role"),
+    )
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("support_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    role: Mapped[str] = mapped_column(Text, default="member", server_default="member")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SeenAuthEvent(Base):
     """NIP-98 replay protection: an auth event id may be used once."""
 
@@ -145,3 +223,16 @@ class SeenAuthEvent(Base):
     seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+class AuthorizationChallenge(Base):
+    """A short-lived, one-use nonce hash bound to one caller and sensitive-operation scope."""
+
+    __tablename__ = "authorization_challenges"
+
+    nonce_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    pubkey: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(160))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

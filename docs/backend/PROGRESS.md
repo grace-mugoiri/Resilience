@@ -13,6 +13,10 @@
 - Counsellor profiles: signed kind 0 profiles (name, bio, specialties, languages, reply time)
   accepted from counsellors on a current roster, and a directory response that carries the
   organisation and each counsellor's `verified`, `expired` or `removed` status.
+- Offline organization roots authorize time-bounded operational roster keys; root-signed rotation
+  and emergency revocation events are stored and returned for client verification.
+- Organization applications explicitly consent to a public counselor directory; the privacy
+  implications of kind 30000 `p` tags are documented.
 - CORS allows the Vite web client (`http://localhost:5173`) in the local example settings.
 - Background cleanup of expired NIP-98 replay records.
 - Nostr relay configuration with NIP-42 authentication, recipient-only delivery for gift-wrapped

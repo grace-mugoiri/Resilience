@@ -8,8 +8,19 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.db.models import CounsellorAttestation, CounsellorProfile, Organization, RosterEvent
+from app.db.models import (
+    CounsellorAttestation,
+    CounsellorProfile,
+    Organization,
+    OrganizationOperationalKey,
+    RosterEvent,
+)
 from app.directory.nip05 import Fetcher, make_fetcher
+from app.directory.operational_keys import (
+    OperationalKeyError,
+    ParsedAuthorization,
+    ParsedRevocation,
+)
 from app.directory.profile import ParsedProfile, ProfileError, profile_details
 from app.directory.roster import ParsedRoster, RosterError
 from app.directory.schemas import (
@@ -58,7 +69,14 @@ def store_roster(db: Session, org: Organization, roster: ParsedRoster, raw: dict
 
     db.add(
         RosterEvent(
-            event_id=roster.event_id, org_id=org.id, created_at=ts(roster.created_at), raw=raw
+            event_id=roster.event_id,
+            org_id=org.id,
+            signer_pubkey=roster.signer_pubkey,
+            key_authorization_event_id=operational_key_for_roster(
+                db, org, roster.signer_pubkey, roster.created_at
+            ).authorization_event_id,
+            created_at=ts(roster.created_at),
+            raw=raw,
         )
     )
     db.flush()
@@ -98,11 +116,92 @@ def store_roster(db: Session, org: Organization, roster: ParsedRoster, raw: dict
     )
 
 
+def operational_key_for_roster(
+    db: Session, org: Organization, pubkey: str, event_created_at: int
+) -> OrganizationOperationalKey:
+    key = db.get(OrganizationOperationalKey, (org.id, pubkey))
+    event_time = ts(event_created_at)
+    if (
+        key is None
+        or "roster" not in key.scopes
+        or key.valid_from > event_time
+        or key.expires_at <= event_time
+        or (key.revoked_at is not None and key.revoked_at <= event_time)
+    ):
+        raise RosterError(403, "roster signer is not authorized for this event time")
+    # A revoked key must never be able to submit an old, pre-revocation event later.
+    if key.revoked_at is not None:
+        raise RosterError(403, "roster signer has been revoked")
+    return key
+
+
+def authorize_operational_key(
+    db: Session, org: Organization, authorization: ParsedAuthorization, raw: dict
+) -> OrganizationOperationalKey:
+    existing = db.get(OrganizationOperationalKey, (org.id, authorization.operational_pubkey))
+    if existing is not None and existing.authorization_event_id == authorization.event_id:
+        return existing
+    if existing is not None:
+        raise OperationalKeyError(
+            409,
+            "operational keys are single-authorization keys; rotate to a fresh key",
+        )
+    if existing is None:
+        existing = OrganizationOperationalKey(
+            org_id=org.id,
+            pubkey=authorization.operational_pubkey,
+            authorization_event_id=authorization.event_id,
+            authorization_event=raw,
+            scopes=authorization.scopes,
+            valid_from=ts(authorization.valid_from),
+            expires_at=ts(authorization.expires_at),
+        )
+        db.add(existing)
+    db.flush()
+    return existing
+
+
+def revoke_operational_key(
+    db: Session, org: Organization, revocation: ParsedRevocation, raw: dict
+) -> OrganizationOperationalKey:
+    key = db.get(OrganizationOperationalKey, (org.id, revocation.operational_pubkey))
+    if key is None:
+        raise OperationalKeyError(404, "operational key is not registered")
+    revoked_at = ts(revocation.revoked_at)
+    if key.revoked_at is not None:
+        if key.revocation_event == raw:
+            return key
+        raise OperationalKeyError(409, "operational key is already revoked")
+    if revoked_at < key.valid_from:
+        raise OperationalKeyError(400, "revocation predates the authorization")
+    key.revoked_at = revoked_at
+    key.revocation_event = raw
+    # Invalidate every attestation derived from the stolen key in this transaction.
+    signed_rosters = select(RosterEvent.event_id).where(
+        RosterEvent.org_id == org.id,
+        RosterEvent.signer_pubkey == key.pubkey,
+    )
+    db.execute(
+        update(CounsellorAttestation)
+        .where(
+            CounsellorAttestation.org_id == org.id,
+            CounsellorAttestation.roster_event_id.in_(signed_rosters),
+        )
+        .values(active=False)
+    )
+    db.flush()
+    return key
+
+
 _STATUS_ORDER: dict[str, int] = {"verified": 0, "expired": 1, "removed": 2}
 
 
-def _status(attestation: CounsellorAttestation, now: datetime) -> CounsellorStatus:
-    if not attestation.active:
+def _status(
+    attestation: CounsellorAttestation,
+    now: datetime,
+    signer_revoked_at: datetime | None = None,
+) -> CounsellorStatus:
+    if not attestation.active or signer_revoked_at is not None:
         return "removed"
     if attestation.expires_at is not None and attestation.expires_at <= now:
         return "expired"
@@ -110,9 +209,12 @@ def _status(attestation: CounsellorAttestation, now: datetime) -> CounsellorStat
 
 
 def _counsellor_out(
-    attestation: CounsellorAttestation, profile_raw: dict | None, now: datetime
+    attestation: CounsellorAttestation,
+    profile_raw: dict | None,
+    now: datetime,
+    signer_revoked_at: datetime | None = None,
 ) -> CounsellorOut:
-    status = _status(attestation, now)
+    status = _status(attestation, now, signer_revoked_at)
     profile = None
     if profile_raw is not None:
         # Stored profiles were validated on the way in; read them with the same rules.
@@ -137,7 +239,17 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
     talking to a counsellor sees "removed" or "expired" instead of the counsellor vanishing."""
     now = datetime.now(UTC)
     rows = db.execute(
-        select(CounsellorAttestation, CounsellorProfile.raw)
+        select(
+            CounsellorAttestation,
+            CounsellorProfile.raw,
+            OrganizationOperationalKey.revoked_at,
+        )
+        .join(RosterEvent, RosterEvent.event_id == CounsellorAttestation.roster_event_id)
+        .outerjoin(
+            OrganizationOperationalKey,
+            (OrganizationOperationalKey.org_id == RosterEvent.org_id)
+            & (OrganizationOperationalKey.pubkey == RosterEvent.signer_pubkey),
+        )
         .outerjoin(
             CounsellorProfile,
             CounsellorProfile.counsellor_pubkey == CounsellorAttestation.counsellor_pubkey,
@@ -145,15 +257,55 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
         .where(CounsellorAttestation.org_id == org.id)
     ).all()
     counsellors = sorted(
-        (_counsellor_out(attestation, raw, now) for attestation, raw in rows), key=_sort_key
+        (
+            _counsellor_out(attestation, raw, now, revoked_at)
+            for attestation, raw, revoked_at in rows
+        ),
+        key=_sort_key,
     )
-    raw = db.scalar(
-        select(RosterEvent.raw)
+    roster_row = db.execute(
+        select(RosterEvent.raw, RosterEvent.key_authorization_event_id)
         .where(RosterEvent.org_id == org.id)
         .order_by(RosterEvent.created_at.desc())
         .limit(1)
+    ).one_or_none()
+    raw = roster_row.raw if roster_row else None
+    authorization = None
+    revocation = None
+    if roster_row and roster_row.key_authorization_event_id:
+        key_events = db.execute(
+            select(
+                OrganizationOperationalKey.authorization_event,
+                OrganizationOperationalKey.revocation_event,
+            ).where(
+                OrganizationOperationalKey.authorization_event_id
+                == roster_row.key_authorization_event_id
+            )
+        ).one_or_none()
+        if key_events:
+            authorization = key_events.authorization_event
+            revocation = key_events.revocation_event
+    return CounsellorsOut(
+        organization=OrgOut.of(org),
+        roster=raw,
+        roster_key_authorization=authorization,
+        roster_key_revocation=revocation,
+        counsellors=counsellors,
     )
-    return CounsellorsOut(organization=OrgOut.of(org), roster=raw, counsellors=counsellors)
+
+
+def _attestation_signer_revoked_at(
+    db: Session, attestation: CounsellorAttestation
+) -> datetime | None:
+    return db.scalar(
+        select(OrganizationOperationalKey.revoked_at)
+        .join(
+            RosterEvent,
+            (RosterEvent.org_id == OrganizationOperationalKey.org_id)
+            & (RosterEvent.signer_pubkey == OrganizationOperationalKey.pubkey),
+        )
+        .where(RosterEvent.event_id == attestation.roster_event_id)
+    )
 
 
 def store_profile(db: Session, org: Organization, profile: ParsedProfile, raw: dict) -> None:
@@ -162,7 +314,15 @@ def store_profile(db: Session, org: Organization, profile: ParsedProfile, raw: d
     if org.status != "approved":
         raise ProfileError(409, "organisation is not approved")
     attestation = db.get(CounsellorAttestation, (org.id, profile.pubkey))
-    if attestation is None or _status(attestation, datetime.now(UTC)) != "verified":
+    if (
+        attestation is None
+        or _status(
+            attestation,
+            datetime.now(UTC),
+            _attestation_signer_revoked_at(db, attestation) if attestation else None,
+        )
+        != "verified"
+    ):
         raise ProfileError(
             403, "only a counsellor on the organisation's current roster can do this"
         )
@@ -199,4 +359,9 @@ def counsellor_of(db: Session, org: Organization, pubkey: str) -> CounsellorOut:
     raw = db.scalar(
         select(CounsellorProfile.raw).where(CounsellorProfile.counsellor_pubkey == pubkey)
     )
-    return _counsellor_out(attestation, raw, datetime.now(UTC))
+    return _counsellor_out(
+        attestation,
+        raw,
+        datetime.now(UTC),
+        _attestation_signer_revoked_at(db, attestation),
+    )

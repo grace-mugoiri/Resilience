@@ -1,4 +1,5 @@
 {
-  "relays": ["ws://localhost:7777"],
+  "schema_version": 1,
+  "relays": ["ws://localhost:7777", "ws://localhost:7778"],
   "approved_orgs_list": "30000:<platform-pubkey>:approved-orgs"
 }

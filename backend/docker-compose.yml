@@ -15,14 +15,48 @@ services:
       interval: 5s
       retries: 10
 
-  relay:
+  relay-1:
     image: scsibug/nostr-rs-relay:0.10.0
     environment:
-      RUST_LOG: warn  # keep the relay from logging client IPs against subscriptions
+      RUST_LOG: warn
     ports: ["7777:8080"]
     volumes:
       - ../relay/config.toml:/usr/src/app/config.toml:ro
-      - relaydata:/usr/src/app/db
+      - relaydata1:/usr/src/app/db
+    depends_on:
+      relay-policy: {condition: service_healthy}
+
+  relay-2:
+    image: scsibug/nostr-rs-relay:0.10.0
+    environment:
+      RUST_LOG: warn
+    ports: ["7778:8080"]
+    volumes:
+      - ../relay/config-2.toml:/usr/src/app/config.toml:ro
+      - relaydata2:/usr/src/app/db
+    depends_on:
+      relay-policy: {condition: service_healthy}
+
+  relay-policy:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://resilience:resilience@db:5432/resilience
+    command: ["python", "-m", "app.relay.server"]
+    expose: ["50051"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; connection = socket.create_connection(('127.0.0.1', 50051), timeout=2); connection.close()"
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+    # The API is the single migration owner. Waiting for it avoids concurrent Alembic runs.
+    depends_on:
+      api: {condition: service_healthy}
 
   api:
     build: .
@@ -50,4 +84,5 @@ services:
 
 volumes:
   pgdata:
-  relaydata:
+  relaydata1:
+  relaydata2:

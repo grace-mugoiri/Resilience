@@ -8,7 +8,15 @@ from sqlalchemy import text
 from app.db.session import get_engine
 from app.nostr.events import sign_event
 from tests.conftest import CLEAN_DIRECTORY, OTHER_SECRET
-from tests.helpers import COUNSELLORS, ORG_SECRET, approved_org, roster_event
+from tests.helpers import (
+    COUNSELLORS,
+    OPERATIONAL_PUBKEY,
+    OPERATIONAL_SECRET,
+    approved_org,
+    operational_authorization,
+    operational_revocation,
+    roster_event,
+)
 
 
 def put(client, org_id, event):
@@ -33,6 +41,8 @@ def test_roster_lists_its_counsellors(client):
     assert sorted(c["pubkey"] for c in r.json()["counsellors"]) == sorted(COUNSELLORS[:2])
     public = client.get(f"/v1/orgs/{org_id}/counsellors").json()
     assert public["roster"] == event  # clients get the signed event to verify themselves
+    assert public["roster_key_authorization"]["pubkey"] == public["organization"]["nostr_pubkey"]
+    assert ["p", OPERATIONAL_PUBKEY] in public["roster_key_authorization"]["tags"]
     assert public["organization"]["name"] == "Wangu Centre"
     assert public["organization"]["nip05"] == "_@wangu.org"
     assert {c["status"] for c in public["counsellors"]} == {"verified"}
@@ -92,6 +102,52 @@ def test_roster_signed_by_another_key_is_refused(client):
     assert put(client, org_id, roster_event(COUNSELLORS, secret=OTHER_SECRET)).status_code == 403
 
 
+def test_root_authorizes_rotates_and_emergency_revokes_operational_keys(client):
+    org_id = approved_org()
+    rotated_secret = "0c" * 32
+    from app.nostr.events import pubkey_of
+
+    rotated_pubkey = pubkey_of(rotated_secret)
+    authorization = operational_authorization(rotated_pubkey)
+    response = client.put(f"/v1/orgs/{org_id}/operational-keys", json=authorization)
+    assert response.status_code == 200
+    assert response.json()["pubkey"] == rotated_pubkey
+
+    assert put(client, org_id, roster_event(COUNSELLORS, secret=rotated_secret)).status_code == 200
+    revocation = operational_revocation(rotated_pubkey, created_at=int(time.time()) + 1)
+    response = client.put(
+        f"/v1/orgs/{org_id}/operational-keys/{rotated_pubkey}/revoke", json=revocation
+    )
+    assert response.status_code == 200
+    assert response.json()["revoked_at"] is not None
+    directory = client.get(f"/v1/orgs/{org_id}/counsellors").json()
+    assert {item["status"] for item in directory["counsellors"]} == {"removed"}
+    assert directory["roster_key_revocation"] == revocation
+    assert (
+        put(
+            client,
+            org_id,
+            roster_event(COUNSELLORS[:1], secret=rotated_secret, created_at=int(time.time()) + 2),
+        ).status_code
+        == 403
+    )
+
+
+def test_operational_authorization_and_revocation_require_root_signature(client):
+    org_id = approved_org()
+    bad_authorization = operational_authorization(root_secret=OTHER_SECRET)
+    response = client.put(f"/v1/orgs/{org_id}/operational-keys", json=bad_authorization)
+    assert response.status_code == 403
+    bad_revocation = operational_revocation(OPERATIONAL_PUBKEY, root_secret=OTHER_SECRET)
+    assert (
+        client.put(
+            f"/v1/orgs/{org_id}/operational-keys/{OPERATIONAL_PUBKEY}/revoke",
+            json=bad_revocation,
+        ).status_code
+        == 403
+    )
+
+
 def test_tampered_roster_is_refused(client):
     org_id = approved_org()
     event = roster_event([COUNSELLORS[0]])
@@ -118,7 +174,7 @@ def test_malformed_rosters_are_refused(client, kwargs):
 def test_nul_character_is_refused_not_a_server_error(client):
     org_id = approved_org()
     tags = [["d", "verified-counsellors"], ["expiration", str(int(time.time()) + 86400)]]
-    event = sign_event(ORG_SECRET, 30000, tags, "nul\u0000here")
+    event = sign_event(OPERATIONAL_SECRET, 30000, tags, "nul\u0000here")
     assert put(client, org_id, event).status_code == 400
 
 
