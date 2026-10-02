@@ -2,7 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import scoped
-from app.routers import admin, config, disbursements, groups, health, orgs, whoami
+from app.routers import (
+    admin,
+    config,
+    counselor_enrollment,
+    disbursements,
+    groups,
+    health,
+    orgs,
+    whoami,
+)
 from app.settings import get_settings
 
 
@@ -21,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(whoami.router)
     app.include_router(scoped.router)
     app.include_router(orgs.router)
+    app.include_router(counselor_enrollment.router)
     app.include_router(groups.router)
     app.include_router(disbursements.router)
     app.include_router(admin.router)

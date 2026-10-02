@@ -37,6 +37,7 @@ from app.directory.service import (
     store_profile,
     store_roster,
 )
+from app.enrollment.service import promote_rostered_enrollments
 
 router = APIRouter(prefix="/v1/orgs", tags=["directory"])
 Db = Annotated[Session, Depends(get_db)]
@@ -93,6 +94,7 @@ def put_roster(org_id: uuid.UUID, db: Db, event: Annotated[dict, Body()]) -> Cou
         roster = parse_roster(event, signer, int(time.time()))
         operational_key_for_roster(db, org, roster.signer_pubkey, roster.created_at)
         store_roster(db, org, roster, event)
+        promote_rostered_enrollments(db, org.id, roster.members)
     except RosterError as exc:
         db.rollback()
         raise HTTPException(exc.status_code, exc.detail) from exc

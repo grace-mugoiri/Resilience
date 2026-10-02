@@ -21,6 +21,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ORG_STATUSES = ("pending", "approved", "suspended")
 DIRECTORY_VISIBILITIES = ("public",)
+COUNSELLOR_ENROLLMENT_STATUSES = (
+    "draft",
+    "under_review",
+    "more_information",
+    "approved",
+    "rejected",
+)
 REASON_CODES = ("transport", "pharmacy", "shelter", "food", "other")
 GROUP_MEMBER_ROLES = ("member", "moderator")
 DISBURSEMENT_STATES = (
@@ -95,6 +102,58 @@ class CounsellorProfile(Base):
     event_id: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     raw: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CounsellorInvite(Base):
+    """A high-entropy, one-use invitation. Only its keyed hash is persisted."""
+
+    __tablename__ = "counsellor_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    credential_recipient_pubkey: Mapped[str] = mapped_column(String(64))
+    created_by_pubkey: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_by_pubkey: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CounsellorEnrollment(Base):
+    """Counsellor-controlled application plus opaque, client-encrypted credentials."""
+
+    __tablename__ = "counsellor_enrollments"
+    __table_args__ = (
+        UniqueConstraint("org_id", "counsellor_pubkey", name="uq_counsellor_enrollment_org_key"),
+        CheckConstraint(
+            _in("status", COUNSELLOR_ENROLLMENT_STATUSES),
+            name="ck_counsellor_enrollment_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    invite_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("counsellor_invites.id", ondelete="RESTRICT"), unique=True
+    )
+    counsellor_pubkey: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(Text, default="draft", server_default="draft")
+    profile_event_id: Mapped[str] = mapped_column(String(64))
+    profile_event: Mapped[dict] = mapped_column(JSONB)
+    encrypted_credentials: Mapped[list | None] = mapped_column(JSONB)
+    review_message: Mapped[str | None] = mapped_column(Text)
+    reviewed_by_pubkey: Mapped[str | None] = mapped_column(String(64))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

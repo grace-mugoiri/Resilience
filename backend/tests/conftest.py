@@ -42,6 +42,7 @@ CLEAN_DIRECTORY = (
     "DELETE FROM disbursements; "
     "DELETE FROM support_group_memberships; DELETE FROM support_groups; "
     "DELETE FROM counsellor_attestations; DELETE FROM counsellor_profiles; "
+    "DELETE FROM counsellor_enrollments; DELETE FROM counsellor_invites; "
     "DELETE FROM roster_events; DELETE FROM organization_operational_keys; "
     "DELETE FROM organizations"
 )
