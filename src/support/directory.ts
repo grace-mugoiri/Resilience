@@ -6,8 +6,9 @@
 // status from the signed roster, so a server that lied could not make a stranger look verified.
 import { verifyEvent, type Event } from 'nostr-tools/pure'
 import { npubEncode } from 'nostr-tools/nip19'
+import { runtimeConfig } from '../config/runtime'
 
-export const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:8000').replace(/\/+$/, '')
+export const API_BASE = runtimeConfig.apiBase
 
 const ROSTER_KIND = 30000
 const ROSTER_D_TAG = 'verified-counsellors'

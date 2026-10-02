@@ -23,6 +23,9 @@ Open the URL printed by Vite (normally `http://localhost:5173`).
 
 ## Connecting to the API
 
+The complete API, NIP-98 and relay integration guide is in
+[`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md).
+
 The **Talk to someone** counselor screens read the counselor directory from the Resilience API
 (the `backend/` folder on the backend branch). By default the app calls `http://localhost:8000`.
 To use another address, copy `.env.example` to `.env.local` and change `VITE_API_BASE`, then
