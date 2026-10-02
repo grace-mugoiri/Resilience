@@ -37,8 +37,10 @@ OTHER_SECRET = "3a" * 32
 # DELETE rather than TRUNCATE: TRUNCATE takes an exclusive lock and rewrites files, which made
 # every test wait about two seconds.
 CLEAN_DIRECTORY = (
-    "DELETE FROM authorization_challenges; DELETE FROM disbursement_transitions; "
+    "DELETE FROM authorization_challenges; DELETE FROM disbursement_approvals; "
+    "DELETE FROM disbursement_transitions; "
     "DELETE FROM disbursements; "
+    "DELETE FROM support_group_memberships; DELETE FROM support_groups; "
     "DELETE FROM counsellor_attestations; DELETE FROM counsellor_profiles; "
     "DELETE FROM roster_events; DELETE FROM organization_operational_keys; "
     "DELETE FROM organizations"

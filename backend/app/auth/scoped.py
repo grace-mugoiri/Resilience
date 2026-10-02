@@ -21,7 +21,9 @@ from app.settings import Settings, get_settings
 router = APIRouter(prefix="/v1/auth", tags=["authorization"])
 Db = Annotated[Session, Depends(get_db)]
 SCOPE_PATTERN = re.compile(
-    r"^(admin:org:(approve|suspend):[0-9a-f-]{36}|disbursement:(create|approve):[0-9a-f-]{36})$"
+    r"^(admin:org:(approve|suspend):[0-9a-f-]{36}"
+    r"|disbursement:(create|approve):[0-9a-f-]{36}"
+    r"|group:(create|member):[0-9a-f-]{36})$"
 )
 
 

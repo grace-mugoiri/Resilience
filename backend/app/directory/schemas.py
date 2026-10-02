@@ -73,6 +73,8 @@ class CounsellorsOut(BaseModel):
     roster: dict | None
     # Root-signed event authorizing the key that signed `roster`.
     roster_key_authorization: dict | None
+    # Root-signed cancellation of the roster signer, if it has been revoked.
+    roster_key_revocation: dict | None
     counsellors: list[CounsellorOut]
 
 

@@ -2,7 +2,8 @@
 
   python scripts/nostr_dev.py pubkey --sec <hex>
   python scripts/nostr_dev.py nip05  --sec <hex>                  # a nostr.json vouching for it
-  python scripts/nostr_dev.py auth   --sec <hex> --url <URL> [--method POST --data '<json>']
+  python scripts/nostr_dev.py auth   --sec <hex> --url <URL> [--method POST --data '<json>'] \
+      [--scope <operation scope> --challenge <server challenge>]
   python scripts/nostr_dev.py authorize-key --sec <root hex> --operational-pubkey <hex>
   python scripts/nostr_dev.py revoke-key --sec <root hex> --operational-pubkey <hex>
   python scripts/nostr_dev.py roster --sec <hex> [--days 30] <counsellor pubkey> ...
@@ -18,6 +19,7 @@ import argparse
 import base64
 import hashlib
 import json
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -45,6 +47,8 @@ def main() -> None:
             p.add_argument("--url", required=True, help="the full public URL, with any query")
             p.add_argument("--method", default="GET")
             p.add_argument("--data", help="request body, exactly as sent")
+            p.add_argument("--scope", help="sensitive-operation scope")
+            p.add_argument("--challenge", help="one-use challenge returned by the API")
         if name == "roster":
             p.add_argument("--days", type=int, default=30)
             p.add_argument("members", nargs="*")
@@ -52,6 +56,12 @@ def main() -> None:
             p.add_argument("--operational-pubkey", required=True)
         if name == "authorize-key":
             p.add_argument("--days", type=int, default=30)
+            p.add_argument(
+                "--scope",
+                action="append",
+                choices=("roster", "groups", "payments"),
+                help="repeat for each delegated scope; defaults to roster",
+            )
         if name == "profile":
             p.add_argument("--name", required=True)
             p.add_argument("--about")
@@ -65,7 +75,15 @@ def main() -> None:
     elif args.cmd == "nip05":
         print(json.dumps({"names": {"_": pubkey_of(args.sec)}}))
     elif args.cmd == "auth":
-        tags = [["u", args.url], ["method", args.method.upper()]]
+        if bool(args.scope) != bool(args.challenge):
+            parser.error("auth requires --scope and --challenge together")
+        tags = [
+            ["u", args.url],
+            ["method", args.method.upper()],
+            ["client_nonce", secrets.token_hex(8)],
+        ]
+        if args.scope:
+            tags.extend([["scope", args.scope], ["challenge", args.challenge]])
         if args.data is not None or args.method.upper() in ("POST", "PUT", "PATCH"):
             body = (args.data or "").encode()
             tags.append(["payload", hashlib.sha256(body).hexdigest()])
@@ -79,12 +97,13 @@ def main() -> None:
     elif args.cmd == "authorize-key":
         now = int(time.time())
         key = args.operational_pubkey
+        scopes = args.scope or ["roster"]
         tags = [
             ["d", f"resilience:org-operations:{key}"],
             ["p", key],
             ["valid_from", str(now)],
             ["expiration", str(now + args.days * 86400)],
-            ["scope", "roster"],
+            *[["scope", scope] for scope in scopes],
         ]
         print(json.dumps(sign_event(args.sec, 30382, tags, "", created_at=now)))
     elif args.cmd == "revoke-key":

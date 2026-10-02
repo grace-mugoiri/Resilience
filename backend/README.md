@@ -2,6 +2,9 @@
 
 FastAPI API, PostgreSQL database, background worker, and Nostr relay.
 
+For the complete start-up, API, relay, testing, and troubleshooting guide, see
+[`docs/backend/RUNBOOK.md`](../docs/backend/RUNBOOK.md).
+
 ## Requirements
 
 - Python 3.11 or newer
@@ -161,7 +164,46 @@ the old key. Revocation is fail-closed: no later roster submission from that key
 including a roster whose timestamp predates the revocation.
 
 The client directory response includes both the roster and its root-signed key authorization, so
-clients can verify `root -> operational key -> roster` without trusting the API.
+clients can verify `root -> operational key -> roster` without trusting the API. If that key is
+revoked, every counsellor attestation produced by it immediately becomes `removed`, and the
+response includes the root-signed cancellation as `roster_key_revocation`.
+
+### Sensitive approval commands
+
+Approval and suspension calls use a short-lived, one-use server challenge in addition to NIP-98.
+With `ADMIN_SEC`, `ORG_ID`, and `API` set, approve an organization like this:
+
+```bash
+SCOPE="admin:org:approve:$ORG_ID"
+BODY=$(jq -nc --arg scope "$SCOPE" '{scope:$scope}')
+AUTH=$(python scripts/nostr_dev.py auth --sec "$ADMIN_SEC" \
+  --url "$API/v1/auth/challenges" --method POST --data "$BODY")
+CHALLENGE=$(curl -fsS -X POST -H "Authorization: $AUTH" \
+  -H 'Content-Type: application/json' --data "$BODY" \
+  "$API/v1/auth/challenges" | jq -r .challenge)
+APPROVE_AUTH=$(python scripts/nostr_dev.py auth --sec "$ADMIN_SEC" \
+  --url "$API/v1/admin/orgs/$ORG_ID/approve" --method POST --data '' \
+  --scope "$SCOPE" --challenge "$CHALLENGE")
+curl -fsS -X POST -H "Authorization: $APPROVE_AUTH" --data '' \
+  "$API/v1/admin/orgs/$ORG_ID/approve" | jq
+```
+
+Disbursement approval uses the same sequence with a `payments`-scoped operational key:
+
+```bash
+SCOPE="disbursement:approve:$DISBURSEMENT_ID"
+BODY=$(jq -nc --arg scope "$SCOPE" '{scope:$scope}')
+AUTH=$(python scripts/nostr_dev.py auth --sec "$PAYMENTS_SEC" \
+  --url "$API/v1/auth/challenges" --method POST --data "$BODY")
+CHALLENGE=$(curl -fsS -X POST -H "Authorization: $AUTH" \
+  -H 'Content-Type: application/json' --data "$BODY" \
+  "$API/v1/auth/challenges" | jq -r .challenge)
+APPROVE_AUTH=$(python scripts/nostr_dev.py auth --sec "$PAYMENTS_SEC" \
+  --url "$API/v1/disbursements/$DISBURSEMENT_ID/approve" --method POST --data '' \
+  --scope "$SCOPE" --challenge "$CHALLENGE")
+curl -fsS -X POST -H "Authorization: $APPROVE_AUTH" --data '' \
+  "$API/v1/disbursements/$DISBURSEMENT_ID/approve" | jq
+```
 
 ### Counselor-directory privacy
 

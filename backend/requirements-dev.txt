@@ -2,3 +2,5 @@
 pytest==9.1.1
 hypothesis==6.168.3
 ruff==0.16.9
+grpcio-tools==1.75.1
+websockets==15.0.1

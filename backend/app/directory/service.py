@@ -176,6 +176,19 @@ def revoke_operational_key(
         raise OperationalKeyError(400, "revocation predates the authorization")
     key.revoked_at = revoked_at
     key.revocation_event = raw
+    # Invalidate every attestation derived from the stolen key in this transaction.
+    signed_rosters = select(RosterEvent.event_id).where(
+        RosterEvent.org_id == org.id,
+        RosterEvent.signer_pubkey == key.pubkey,
+    )
+    db.execute(
+        update(CounsellorAttestation)
+        .where(
+            CounsellorAttestation.org_id == org.id,
+            CounsellorAttestation.roster_event_id.in_(signed_rosters),
+        )
+        .values(active=False)
+    )
     db.flush()
     return key
 
@@ -183,8 +196,12 @@ def revoke_operational_key(
 _STATUS_ORDER: dict[str, int] = {"verified": 0, "expired": 1, "removed": 2}
 
 
-def _status(attestation: CounsellorAttestation, now: datetime) -> CounsellorStatus:
-    if not attestation.active:
+def _status(
+    attestation: CounsellorAttestation,
+    now: datetime,
+    signer_revoked_at: datetime | None = None,
+) -> CounsellorStatus:
+    if not attestation.active or signer_revoked_at is not None:
         return "removed"
     if attestation.expires_at is not None and attestation.expires_at <= now:
         return "expired"
@@ -192,9 +209,12 @@ def _status(attestation: CounsellorAttestation, now: datetime) -> CounsellorStat
 
 
 def _counsellor_out(
-    attestation: CounsellorAttestation, profile_raw: dict | None, now: datetime
+    attestation: CounsellorAttestation,
+    profile_raw: dict | None,
+    now: datetime,
+    signer_revoked_at: datetime | None = None,
 ) -> CounsellorOut:
-    status = _status(attestation, now)
+    status = _status(attestation, now, signer_revoked_at)
     profile = None
     if profile_raw is not None:
         # Stored profiles were validated on the way in; read them with the same rules.
@@ -219,7 +239,17 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
     talking to a counsellor sees "removed" or "expired" instead of the counsellor vanishing."""
     now = datetime.now(UTC)
     rows = db.execute(
-        select(CounsellorAttestation, CounsellorProfile.raw)
+        select(
+            CounsellorAttestation,
+            CounsellorProfile.raw,
+            OrganizationOperationalKey.revoked_at,
+        )
+        .join(RosterEvent, RosterEvent.event_id == CounsellorAttestation.roster_event_id)
+        .outerjoin(
+            OrganizationOperationalKey,
+            (OrganizationOperationalKey.org_id == RosterEvent.org_id)
+            & (OrganizationOperationalKey.pubkey == RosterEvent.signer_pubkey),
+        )
         .outerjoin(
             CounsellorProfile,
             CounsellorProfile.counsellor_pubkey == CounsellorAttestation.counsellor_pubkey,
@@ -227,7 +257,11 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
         .where(CounsellorAttestation.org_id == org.id)
     ).all()
     counsellors = sorted(
-        (_counsellor_out(attestation, raw, now) for attestation, raw in rows), key=_sort_key
+        (
+            _counsellor_out(attestation, raw, now, revoked_at)
+            for attestation, raw, revoked_at in rows
+        ),
+        key=_sort_key,
     )
     roster_row = db.execute(
         select(RosterEvent.raw, RosterEvent.key_authorization_event_id)
@@ -237,18 +271,40 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
     ).one_or_none()
     raw = roster_row.raw if roster_row else None
     authorization = None
+    revocation = None
     if roster_row and roster_row.key_authorization_event_id:
-        authorization = db.scalar(
-            select(OrganizationOperationalKey.authorization_event).where(
+        key_events = db.execute(
+            select(
+                OrganizationOperationalKey.authorization_event,
+                OrganizationOperationalKey.revocation_event,
+            ).where(
                 OrganizationOperationalKey.authorization_event_id
                 == roster_row.key_authorization_event_id
             )
-        )
+        ).one_or_none()
+        if key_events:
+            authorization = key_events.authorization_event
+            revocation = key_events.revocation_event
     return CounsellorsOut(
         organization=OrgOut.of(org),
         roster=raw,
         roster_key_authorization=authorization,
+        roster_key_revocation=revocation,
         counsellors=counsellors,
+    )
+
+
+def _attestation_signer_revoked_at(
+    db: Session, attestation: CounsellorAttestation
+) -> datetime | None:
+    return db.scalar(
+        select(OrganizationOperationalKey.revoked_at)
+        .join(
+            RosterEvent,
+            (RosterEvent.org_id == OrganizationOperationalKey.org_id)
+            & (RosterEvent.signer_pubkey == OrganizationOperationalKey.pubkey),
+        )
+        .where(RosterEvent.event_id == attestation.roster_event_id)
     )
 
 
@@ -258,7 +314,15 @@ def store_profile(db: Session, org: Organization, profile: ParsedProfile, raw: d
     if org.status != "approved":
         raise ProfileError(409, "organisation is not approved")
     attestation = db.get(CounsellorAttestation, (org.id, profile.pubkey))
-    if attestation is None or _status(attestation, datetime.now(UTC)) != "verified":
+    if (
+        attestation is None
+        or _status(
+            attestation,
+            datetime.now(UTC),
+            _attestation_signer_revoked_at(db, attestation) if attestation else None,
+        )
+        != "verified"
+    ):
         raise ProfileError(
             403, "only a counsellor on the organisation's current roster can do this"
         )
@@ -295,4 +359,9 @@ def counsellor_of(db: Session, org: Organization, pubkey: str) -> CounsellorOut:
     raw = db.scalar(
         select(CounsellorProfile.raw).where(CounsellorProfile.counsellor_pubkey == pubkey)
     )
-    return _counsellor_out(attestation, raw, datetime.now(UTC))
+    return _counsellor_out(
+        attestation,
+        raw,
+        datetime.now(UTC),
+        _attestation_signer_revoked_at(db, attestation),
+    )

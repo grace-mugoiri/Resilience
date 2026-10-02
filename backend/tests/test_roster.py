@@ -120,6 +120,9 @@ def test_root_authorizes_rotates_and_emergency_revokes_operational_keys(client):
     )
     assert response.status_code == 200
     assert response.json()["revoked_at"] is not None
+    directory = client.get(f"/v1/orgs/{org_id}/counsellors").json()
+    assert {item["status"] for item in directory["counsellors"]} == {"removed"}
+    assert directory["roster_key_revocation"] == revocation
     assert (
         put(
             client,

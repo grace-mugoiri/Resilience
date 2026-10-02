@@ -1,6 +1,7 @@
 """Shared helpers for directory tests: signed requests, fake websites, approved orgs."""
 
 import json
+import secrets
 import time
 import uuid
 from datetime import UTC, datetime
@@ -23,7 +24,13 @@ COUNSELLORS = [pubkey_of(f"{i:02x}" * 32) for i in range(1, 5)]
 def sensitive_tags(client, scope: str, secret: str) -> list[list[str]]:
     body = json.dumps({"scope": scope}).encode()
     path = "/v1/auth/challenges"
-    headers = auth_header(BASE + path, "POST", body, secret)
+    headers = auth_header(
+        BASE + path,
+        "POST",
+        body,
+        secret,
+        extra_tags=[["client_nonce", secrets.token_hex(8)]],
+    )
     headers["Content-Type"] = "application/json"
     response = client.post(path, content=body, headers=headers)
     assert response.status_code == 201
@@ -58,7 +65,11 @@ def nostr_json(pubkey: str) -> tuple[int, bytes]:
     return 200, json.dumps({"names": {"_": pubkey}}).encode()
 
 
-def approved_org(domain: str = "wangu.org", pubkey: str = ORG_PUBKEY) -> uuid.UUID:
+def approved_org(
+    domain: str = "wangu.org",
+    pubkey: str = ORG_PUBKEY,
+    scopes: list[str] | None = None,
+) -> uuid.UUID:
     with Session(get_engine()) as db:
         org = Organization(
             name="Wangu Centre",
@@ -71,14 +82,14 @@ def approved_org(domain: str = "wangu.org", pubkey: str = ORG_PUBKEY) -> uuid.UU
         db.add(org)
         db.flush()
         now = int(time.time())
-        authorization = operational_authorization(created_at=now - 3600)
+        authorization = operational_authorization(created_at=now - 3600, scopes=scopes)
         db.add(
             OrganizationOperationalKey(
                 org_id=org.id,
                 pubkey=OPERATIONAL_PUBKEY,
                 authorization_event_id=authorization["id"],
                 authorization_event=authorization,
-                scopes=["roster"],
+                scopes=scopes or ["roster"],
                 valid_from=datetime.fromtimestamp(now - 3600, UTC),
                 expires_at=datetime.fromtimestamp(now + 30 * 86400, UTC),
             )
