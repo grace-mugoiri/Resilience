@@ -33,7 +33,9 @@ is `http://localhost:5173`.
 
 The app does not take the API's word for who is verified. Each organisation signs its list of
 counselors and each counselor signs her own profile with Nostr keys, and the app checks both
-signatures in the browser (`src/support/directory.ts`). If a list fails the check, its counselors
+signatures in the browser (`src/support/directory.ts`). The list is signed by the organisation's
+day-to-day key, and the app also checks that the organisation's main key authorised that key. If
+the main key has cancelled it, every counselor on that list shows as removed. If a list fails the check, its counselors
 show as **Not verified**. Profile pictures are never loaded, because loading an image would give
 the image's host the survivor's IP address.
 

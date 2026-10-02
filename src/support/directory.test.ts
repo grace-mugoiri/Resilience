@@ -29,6 +29,20 @@ const ORG: Organization = {
   nostr_pubkey: getPublicKey(ORG_SECRET),
 }
 
+const OP_SECRET = hexToBytes('0b'.repeat(32))
+const OP = getPublicKey(OP_SECRET)
+
+/** The root key authorising a day-to-day key, as the API returns it next to the roster. */
+function keyAuthorization({ secret = ORG_SECRET, key = OP, scope = 'roster', from = nowSeconds - 3600, until = nowSeconds + 30 * 86400 } = {}) {
+  const tags = [['d', `resilience:org-operations:${key}`], ['p', key], ['valid_from', String(from)], ['expiration', String(until)], ['scope', scope]]
+  return finalizeEvent({ kind: 30382, created_at: from, tags, content: '' }, secret)
+}
+
+function keyRevocation({ secret = ORG_SECRET, key = OP } = {}) {
+  const tags = [['d', `resilience:org-operations-revocation:${key}`], ['p', key]]
+  return finalizeEvent({ kind: 30383, created_at: nowSeconds - 10, tags, content: '' }, secret)
+}
+
 function roster(members: string[], { secret = ORG_SECRET, expiresIn = 30 * 86400, kind = 30000, d = 'verified-counsellors' } = {}) {
   const tags = [['d', d], ...members.map((m) => ['p', m]), ['expiration', String(nowSeconds + expiresIn)]]
   return finalizeEvent({ kind, created_at: nowSeconds - 60, tags, content: '' }, secret)
@@ -113,6 +127,54 @@ describe('buildCounselors', () => {
       { pubkey: AMANI, profile_event: profile(AMANI_SECRET, { name: 'Amani' }) },
     ]), NOW)
     expect(result.map((c) => c.profile?.name ?? c.status)).toEqual(['Amani', 'Zawadi', 'removed'])
+  })
+})
+
+describe('rosters signed by a day-to-day key', () => {
+  const opDirectory = (extra: Partial<ApiDirectory>) => ({
+    ...directory(roster([GRACE], { secret: OP_SECRET }), [{ pubkey: GRACE, profile_event: null }]),
+    ...extra,
+  })
+
+  it('verifies counselors when the root key authorised that key', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: keyAuthorization() }), NOW)
+    expect(grace.status).toBe('verified')
+  })
+
+  it('trusts nothing without the authorisation', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({}), NOW)
+    expect(grace.status).toBe('unverified')
+  })
+
+  it('refuses an authorisation signed by someone other than the root key', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: keyAuthorization({ secret: OTHER_SECRET }) }), NOW)
+    expect(grace.status).toBe('unverified')
+  })
+
+  it('refuses an authorisation for another key', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: keyAuthorization({ key: AMANI }) }), NOW)
+    expect(grace.status).toBe('unverified')
+  })
+
+  it('refuses an authorisation without the roster scope', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: keyAuthorization({ scope: 'payments' }) }), NOW)
+    expect(grace.status).toBe('unverified')
+  })
+
+  it('refuses a roster signed outside the authorised window', () => {
+    const late = keyAuthorization({ from: nowSeconds - 30, until: nowSeconds + 86400 })
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: late }), NOW)
+    expect(grace.status).toBe('unverified')
+  })
+
+  it('removes everyone on the roster once the root key cancels that key', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: keyAuthorization(), roster_key_revocation: keyRevocation() }), NOW)
+    expect(grace.status).toBe('removed')
+  })
+
+  it('ignores a cancellation that the root key did not sign', () => {
+    const [grace] = buildCounselors(ORG, opDirectory({ roster_key_authorization: keyAuthorization(), roster_key_revocation: keyRevocation({ secret: OTHER_SECRET }) }), NOW)
+    expect(grace.status).toBe('verified')
   })
 })
 

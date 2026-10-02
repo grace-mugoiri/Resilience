@@ -11,17 +11,31 @@ export const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:8000
 
 const ROSTER_KIND = 30000
 const ROSTER_D_TAG = 'verified-counsellors'
+// An organisation keeps its main (root) key offline and signs rosters with a day-to-day
+// (operational) key. The root key vouches for that key, and can cancel it if it is stolen.
+const KEY_AUTHORIZATION_KIND = 30382
+const KEY_REVOCATION_KIND = 30383
+const KEY_AUTHORIZATION_D_PREFIX = 'resilience:org-operations:'
+const KEY_REVOCATION_D_PREFIX = 'resilience:org-operations-revocation:'
 const PROFILE_KIND = 0
 const HEX64 = /^[0-9a-f]{64}$/
 
 export type Organization = { id: string; name: string; domain: string; nostr_pubkey: string }
 
 type ApiCounselor = { pubkey: string; profile_event: unknown }
-export type ApiDirectory = { organization: Organization; roster: unknown; counsellors: ApiCounselor[] }
+export type ApiDirectory = {
+  organization: Organization
+  roster: unknown
+  // Root-signed event that lets the roster's signer sign rosters, and its cancellation if any.
+  roster_key_authorization?: unknown
+  roster_key_revocation?: unknown
+  counsellors: ApiCounselor[]
+}
 
 // verified:   on the organisation's newest signed roster, which has not expired
 // expired:    on that roster, but the organisation let it lapse
-// removed:    the organisation's signed roster no longer lists her
+// removed:    the organisation's signed roster no longer lists her, or the key that signed the
+//             roster has been cancelled by the organisation
 // unverified: the roster's signature could not be checked, so nothing can be vouched for
 export type Status = 'verified' | 'expired' | 'removed' | 'unverified'
 
@@ -69,16 +83,54 @@ function firstTag(event: Event, name: string): string | undefined {
   return event.tags.find((t) => t.length >= 2 && t[0] === name)?.[1]
 }
 
-type Roster = { members: Set<string>; expiresAt: Date }
+type Roster = { members: Set<string>; expiresAt: Date; signerRevoked: boolean }
 
-export function readRoster(value: unknown, org: Organization): Roster | null {
+function onlyTag(event: Event, name: string): string | undefined {
+  const values = event.tags.filter((t) => t.length >= 2 && t[0] === name).map((t) => t[1])
+  return values.length === 1 ? values[0] : undefined
+}
+
+const seconds = (value: string | undefined) => (value && /^\d+$/.test(value) ? Number(value) : null)
+
+/** True if the organisation's root key let `signer` sign rosters at time `signedAt`. */
+function keyAuthorizedAt(value: unknown, org: Organization, signer: string, signedAt: number): boolean {
+  const event = checked(value)
+  if (!event || event.kind !== KEY_AUTHORIZATION_KIND || event.pubkey !== org.nostr_pubkey) return false
+  if (onlyTag(event, 'p') !== signer || firstTag(event, 'd') !== KEY_AUTHORIZATION_D_PREFIX + signer) return false
+  if (!event.tags.some((t) => t[0] === 'scope' && t[1] === 'roster')) return false
+  const validFrom = seconds(firstTag(event, 'valid_from') ?? String(event.created_at))
+  const expiresAt = seconds(onlyTag(event, 'expiration'))
+  return validFrom !== null && expiresAt !== null && validFrom <= signedAt && signedAt < expiresAt
+}
+
+/** True if the organisation's root key has cancelled `signer`. */
+function keyRevoked(value: unknown, org: Organization, signer: string): boolean {
+  const event = checked(value)
+  return Boolean(
+    event && event.kind === KEY_REVOCATION_KIND && event.pubkey === org.nostr_pubkey &&
+      onlyTag(event, 'p') === signer && firstTag(event, 'd') === KEY_REVOCATION_D_PREFIX + signer,
+  )
+}
+
+export function readRoster(
+  value: unknown,
+  org: Organization,
+  authorization?: unknown,
+  revocation?: unknown,
+): Roster | null {
   const event = checked(value)
   if (!event || event.kind !== ROSTER_KIND || firstTag(event, 'd') !== ROSTER_D_TAG) return null
-  if (event.pubkey !== org.nostr_pubkey) return null
+  // Signed by the root key itself, or by a day-to-day key the root key authorised at signing time.
+  const byRoot = event.pubkey === org.nostr_pubkey
+  if (!byRoot && !keyAuthorizedAt(authorization, org, event.pubkey, event.created_at)) return null
   const expiration = firstTag(event, 'expiration')
   if (!expiration || !/^\d+$/.test(expiration)) return null
   const members = new Set(event.tags.filter((t) => t[0] === 'p' && HEX64.test(t[1] ?? '')).map((t) => t[1]))
-  return { members, expiresAt: new Date(Number(expiration) * 1000) }
+  return {
+    members,
+    expiresAt: new Date(Number(expiration) * 1000),
+    signerRevoked: !byRoot && keyRevoked(revocation, org, event.pubkey),
+  }
 }
 
 function text(value: unknown, limit: number): string | null {
@@ -134,7 +186,7 @@ export function sortCounselors(items: Counselor[]): Counselor[] {
 
 /** Turn one organisation's API answer into counselors whose status comes from signatures only. */
 export function buildCounselors(org: Organization, dir: ApiDirectory, now = new Date()): Counselor[] {
-  const roster = readRoster(dir.roster, org)
+  const roster = readRoster(dir.roster, org, dir.roster_key_authorization, dir.roster_key_revocation)
   const listed = new Map<string, unknown>()
   for (const c of Array.isArray(dir.counsellors) ? dir.counsellors : []) {
     if (c && typeof c.pubkey === 'string' && HEX64.test(c.pubkey)) listed.set(c.pubkey, c.profile_event)
@@ -146,7 +198,8 @@ export function buildCounselors(org: Organization, dir: ApiDirectory, now = new 
     [...listed].map(([pubkey, profileEvent]) => {
       let status: Status = 'unverified'
       if (roster) {
-        if (!roster.members.has(pubkey)) status = 'removed'
+        // A cancelled key may have been stolen, so nobody on its roster is vouched for any more.
+        if (roster.signerRevoked || !roster.members.has(pubkey)) status = 'removed'
         else status = roster.expiresAt > now ? 'verified' : 'expired'
       }
       return {
