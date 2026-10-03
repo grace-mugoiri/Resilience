@@ -9,9 +9,14 @@ from app.worker import recheck_nip05
 from tests.conftest import ADMIN_SECRET, OTHER_SECRET, auth_header
 from tests.helpers import (
     BASE,
+    OPERATIONAL_PUBKEY,
+    OPERATIONAL_SECRET,
     ORG_PUBKEY,
     ORG_SECRET,
+    approved_org,
     nostr_json,
+    operational_authorization,
+    operational_revocation,
     sensitive_tags,
     signed_get,
     signed_post,
@@ -91,6 +96,56 @@ def test_one_application_per_domain_and_per_key(client):
 def test_pending_orgs_are_not_public(client):
     apply(client)
     assert client.get("/v1/orgs").json() == []
+
+
+def test_organization_can_read_its_own_pending_application(client):
+    expected = apply(client).json()
+    response = signed_get(client, "/v1/orgs/me", ORG_SECRET)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "organization": expected,
+        "actor": "root",
+        "operational_key": None,
+    }
+    assert signed_get(client, "/v1/orgs/me", OTHER_SECRET).status_code == 404
+
+
+def test_active_operational_key_recovers_pending_org_and_portal_state(client):
+    org_id = apply(client).json()["id"]
+    authorization = operational_authorization(scopes=["verification"])
+    registered = client.put(f"/v1/orgs/{org_id}/operational-keys", json=authorization)
+    assert registered.status_code == 200, registered.text
+
+    mine = signed_get(client, "/v1/orgs/me", OPERATIONAL_SECRET)
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["organization"]["id"] == org_id
+    assert mine.json()["actor"] == "operational"
+    assert mine.json()["operational_key"]["scopes"] == ["verification"]
+
+    keys = signed_get(client, f"/v1/orgs/{org_id}/operational-keys", ORG_SECRET)
+    assert keys.status_code == 200, keys.text
+    assert [key["pubkey"] for key in keys.json()] == [OPERATIONAL_PUBKEY]
+
+    dashboard = signed_get(client, f"/v1/orgs/{org_id}/dashboard", OPERATIONAL_SECRET)
+    assert dashboard.status_code == 200, dashboard.text
+    assert dashboard.json()["organization"]["status"] == "pending"
+    assert dashboard.json()["active_invites"] == 0
+    assert dashboard.json()["enrollments"]["under_review"] == 0
+
+    revoked = operational_revocation()
+    response = client.put(
+        f"/v1/orgs/{org_id}/operational-keys/{OPERATIONAL_PUBKEY}/revoke",
+        json=revoked,
+    )
+    assert response.status_code == 200, response.text
+    assert signed_get(client, "/v1/orgs/me", OPERATIONAL_SECRET).status_code == 404
+
+
+def test_approved_org_dashboard_rejects_unrelated_keys(client):
+    org_id = approved_org(scopes=["verification"])
+    path = f"/v1/orgs/{org_id}/dashboard"
+    assert signed_get(client, path, OPERATIONAL_SECRET).status_code == 200
+    assert signed_get(client, path, OTHER_SECRET).status_code == 403
 
 
 def test_admin_list_needs_an_admin_key(client):

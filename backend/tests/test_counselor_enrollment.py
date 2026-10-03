@@ -82,9 +82,11 @@ def credentials_payload(recipient: str = REVIEW_KEY):
         "documents": [
             {
                 "v": 1,
-                "algorithm": "nip44-v2",
+                "algorithm": "aes-256-gcm+nip44-v2",
                 "recipient_pubkey": recipient,
-                "ciphertext": base64.b64encode(bytes([2]) + bytes(98)).decode(),
+                "wrapped_key": base64.b64encode(bytes([2]) + bytes(98)).decode(),
+                "iv": base64.b64encode(bytes(12)).decode(),
+                "ciphertext": base64.b64encode(bytes(17)).decode(),
                 "media_type": "application/pdf",
             }
         ]
@@ -121,6 +123,14 @@ def test_complete_enrollment_requires_review_and_roster(client):
     assert invitation["code"].startswith("RS-")
     assert invitation["credential_recipient_pubkey"] == REVIEW_KEY
 
+    invitations_path = f"/v1/orgs/{org_id}/counselor-invites"
+    invitations = signed_get(client, invitations_path, OPERATIONAL_SECRET)
+    assert invitations.status_code == 200, invitations.text
+    assert invitations.json()[0]["id"] == invitation["id"]
+    assert invitations.json()[0]["used_at"] is None
+    assert "code" not in invitations.json()[0]
+    assert "code_hash" not in invitations.json()[0]
+
     response = claim(client, invitation["code"])
     assert response.status_code == 201, response.text
     enrollment = response.json()
@@ -128,13 +138,17 @@ def test_complete_enrollment_requires_review_and_roster(client):
     assert enrollment["status"] == "draft"
     assert enrollment["directory_status"] is None
 
+    mine = signed_get(client, "/v1/counselor-enrollments", COUNSELLOR_SECRET)
+    assert mine.status_code == 200, mine.text
+    assert [item["id"] for item in mine.json()] == [enrollment_id]
+
     # A one-use code cannot be claimed again, even by its intended caller.
     assert claim(client, invitation["code"]).status_code == 404
 
     submitted = submit_credentials(client, enrollment_id)
     assert submitted.status_code == 200, submitted.text
     assert submitted.json()["status"] == "under_review"
-    assert submitted.json()["encrypted_credentials"][0]["ciphertext"].startswith("Ag")
+    assert submitted.json()["encrypted_credentials"][0]["wrapped_key"].startswith("Ag")
 
     queue_path = f"/v1/orgs/{org_id}/counselor-enrollments?status=under_review"
     queue = signed_get(client, queue_path, OPERATIONAL_SECRET)

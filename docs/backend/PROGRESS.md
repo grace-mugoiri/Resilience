@@ -1,105 +1,32 @@
-# Backend progress
+# Backend implementation status
 
-Status as of Wednesday 30 September 2026. Hack4Freedom Nairobi, Demo Day Monday 5 October.
+## Implemented
 
-This is a record of what the backend work has covered so far: what the app is for, what was
-decided and why, what is built and tested, what went wrong and how it was fixed, and what is left.
-For how to run it, see [backend/README.md](../../backend/README.md). For the full design, see
-[ARCHITECTURE.md](ARCHITECTURE.md).
+- FastAPI service, PostgreSQL schema and migration, Docker Compose, and CI checks.
+- NIP-98 request authentication with signature, time-window, URL, method, payload-hash and replay
+  checks.
+- Signed client configuration and exact-origin CORS validation.
+- Public health and identity endpoints.
+- Organisation applications, platform-admin approval and suspension, and NIP-05 website checks.
+- Signed counsellor roster intake, stale-roster rejection, public directory endpoints, and periodic
+  NIP-05 re-checks.
+- Counsellor profiles: signed kind 0 profiles (name, bio, specialties, languages, reply time)
+  accepted from counsellors on a current roster, and a directory response that carries the
+  organisation and each counsellor's `verified`, `expired` or `removed` status.
+- Offline organization roots authorize time-bounded operational roster keys; root-signed rotation
+  and emergency revocation events are stored and returned for client verification.
+- Organization applications explicitly consent to a public counselor directory; the privacy
+  implications of kind 30000 `p` tags are documented.
+- Single-use, hashed counselor invitations; counselor-signed onboarding profiles; hybrid
+  AES-256-GCM/NIP-44 credential encryption; organization review states; and roster-gated activation.
+- CORS allows the Vite web client (`http://localhost:5173`) in the local example settings.
+- Background cleanup of expired NIP-98 replay records.
+- Nostr relay configuration with NIP-42 authentication, recipient-only delivery for gift-wrapped
+  direct messages, event and subscription rate limits, and expiry handling.
 
-## 1. The project in one paragraph
+## API routes
 
-Resilience lets a person facing gender-based violence talk privately to a verified support
-organisation and receive emergency money, without leaving anything on her phone or her M-Pesa
-statement. In Kenya's 2022 health survey (DHS), 41% of women who have had a partner reported
-violence from him. Her phone is often the danger: an abuser checks her messages and M-Pesa, and
-every normal channel (WhatsApp, Signal, a registered SIM) is tied to her ID.
-
-**The demo:** open a link, find verified help, talk safely, get money for the journey, leave no
-trace.
-
-## 2. Who uses it
-
-**Akinyi, the survivor.** 29, lives in Kayole, sells vegetables, cheap Android phone that her
-husband sometimes checks. She has maybe ten minutes alone. Her steps:
-
-1. Open a link in a private tab. No install, no signup. A throwaway identity is created for her.
-2. Pick an organisation marked verified. Her own phone checks the mark.
-3. Chat privately. Messages are encrypted and disappear after 7 days.
-4. Receive emergency money (for example KSh 500 for transport) over Lightning, spent at a till,
-   so it never shows on her M-Pesa statement.
-5. Tap quick exit. The screen jumps to a harmless page and closing the tab wipes everything.
-
-**Wambui, the counsellor.** Works at a registered GBV organisation, on a laptop. She signs in with
-her organisation's verified key, replies to chats, and sends the KSh 500 from the organisation's
-own wallet. The app records the payment but never holds the money.
-
-## 3. Decisions made, and why
-
-| Decision | Why |
-|---|---|
-| Web app first, not a mobile app | A judge can open a link, and there is nothing installed on her phone for an abuser to find. |
-| **The one rule:** the server never holds her keys, her messages, her money, or an IP address next to a public key | If the server were seized or subpoenaed, it should reveal nothing about any survivor. |
-| Our own relay, not public ones | Only the recipient can fetch a message, messages are really deleted on expiry, and we control logging. |
-| An **authenticated** relay (of the four types: personal, paid, authenticated, public) | Clients log in with their key (NIP-42) and private messages are served only to their recipient. Paid would link a payment to her key; public lets anyone download encrypted messages and study who talks to whom. |
-| No accounts, passwords or phone numbers | Every write is signed with a Nostr key (NIP-98). Survivors never log in to the API at all. |
-| Organisations prove themselves through their own website (NIP-05) | Anyone can claim to be a counsellor. A website listing the organisation's key is a check the survivor's phone can repeat itself. |
-| No Lightning custody | Holding other people's money is licensed activity under Kenya's VASP Act 2025. The organisation's wallet pays; the server only records proof. |
-| No M-Pesa (Daraja) payouts to survivors | They would appear on her M-Pesa statement. |
-| Cut: group chat | NIP-17 groups have no admins and no bans, so an abuser who gets in cannot be removed. |
-| Cut: health records | The riskiest data in the system, and a record encrypted with a key that dies with the tab can never be reopened. |
-| `coincurve` plus our own ~80-line helper for Nostr signatures, not `nostr-sdk` | Smaller and easy to read and test. |
-| Replay blocking on write requests only | Two identical reads in the same second produce the same signed event, and repeating a read changes nothing. |
-| Docker Compose for the deployed server and for teammates | One command starts the same pinned versions everywhere. |
-| Docker's database on port 5433 | Your laptop already had PostgreSQL on 5432. |
-| Your laptop is the real copy of the code | Work arrives as patch files you review with `git diff` and apply with `git apply`. Nothing is pushed until you say so. |
-
-## 4. What is built
-
-### Monday 28 September: the foundation
-
-- FastAPI project, settings from `.env`, Dockerfile, Docker Compose (database, relay, API,
-  worker), GitHub Actions CI (lint, format, migration, tests).
-- `GET /healthz`: is the database reachable.
-- `GET /v1/config`: the list of trusted relays, signed by the platform key. The server refuses to
-  serve it if the signature does not match, so a swapped relay list is caught.
-- `GET /v1/whoami`: returns your key if your signed request is valid. For testing signing.
-- NIP-98 request signing: checks the signature, a 60-second time window, the exact public URL,
-  the method, a hash of the body, and blocks a replayed write.
-- CORS locked to the web app's exact address. The server refuses to start with `*`.
-- The whole database schema in one migration (`0001`).
-- Worker: deletes old replay-guard entries every minute.
-- Relay config for `nostr-rs-relay` 0.10.0: login required, private messages only to their
-  recipient, rate limits, no IP logging.
-- The backend architecture document.
-
-### Tuesday 29 September: Docker, then the directory
-
-- **First real Docker run on your laptop.** It found two problems, both fixed (section 7).
-- **The directory of verified organisations and counsellors**, which answers "is this counsellor
-  real?":
-  - `POST /v1/orgs`: an organisation applies, signed with its own key.
-  - `GET /v1/admin/orgs`, `POST .../approve`, `POST .../suspend`: admin only. Approval checks
-    the organisation's website (`/.well-known/nostr.json`) first and is refused if the site does
-    not list the organisation's key.
-  - `PUT /v1/orgs/{id}/roster`: the organisation's signed list of counsellors. Only its own key
-    can sign it, older lists are refused, and anyone left off the newest list stops being trusted.
-  - `GET /v1/orgs`, `GET /v1/orgs/{id}/counsellors`: public, no login, and the signed list is
-    included so the survivor's browser can check it without trusting our server.
-  - Worker: re-checks every organisation's website every 6 hours. A site that changes its key gets
-    the organisation suspended; a site that is merely down does not.
-  - `scripts/nostr_dev.py`: makes test keys, signed headers, `nostr.json` files and rosters, for
-    testing by hand.
-
-### Wednesday 30 September: documentation
-
-- `backend/README.md` rewritten as a full how-to-run guide: setup, Docker, day-to-day
-  development, checks, a manual walkthrough and troubleshooting.
-- This document.
-
-### Endpoints
-
-| Method and path | Who can call it | Status |
+| Method and path | Authorization | Status |
 |---|---|---|
 | `GET /healthz` | anyone | built |
 | `GET /v1/config` | anyone | built |

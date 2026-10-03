@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     CounsellorAttestation,
+    CounsellorAvailability,
     CounsellorProfile,
     Organization,
     OrganizationOperationalKey,
@@ -213,6 +214,7 @@ def _counsellor_out(
     profile_raw: dict | None,
     now: datetime,
     signer_revoked_at: datetime | None = None,
+    availability: CounsellorAvailability | None = None,
 ) -> CounsellorOut:
     status = _status(attestation, now, signer_revoked_at)
     profile = None
@@ -226,6 +228,9 @@ def _counsellor_out(
         verified_until=None if status == "removed" else attestation.expires_at,
         profile=profile,
         profile_event=profile_raw,
+        available=availability.available if availability is not None else True,
+        working_hours=availability.working_hours if availability is not None else None,
+        availability_event=availability.auth_event if availability is not None else None,
     )
 
 
@@ -243,6 +248,7 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
             CounsellorAttestation,
             CounsellorProfile.raw,
             OrganizationOperationalKey.revoked_at,
+            CounsellorAvailability,
         )
         .join(RosterEvent, RosterEvent.event_id == CounsellorAttestation.roster_event_id)
         .outerjoin(
@@ -254,12 +260,17 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
             CounsellorProfile,
             CounsellorProfile.counsellor_pubkey == CounsellorAttestation.counsellor_pubkey,
         )
+        .outerjoin(
+            CounsellorAvailability,
+            CounsellorAvailability.counsellor_pubkey
+            == CounsellorAttestation.counsellor_pubkey,
+        )
         .where(CounsellorAttestation.org_id == org.id)
     ).all()
     counsellors = sorted(
         (
-            _counsellor_out(attestation, raw, now, revoked_at)
-            for attestation, raw, revoked_at in rows
+            _counsellor_out(attestation, raw, now, revoked_at, availability)
+            for attestation, raw, revoked_at, availability in rows
         ),
         key=_sort_key,
     )

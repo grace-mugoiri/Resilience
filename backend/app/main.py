@@ -9,6 +9,7 @@ from app.routers import (
     disbursements,
     groups,
     health,
+    messaging,
     orgs,
     whoami,
 )
@@ -32,6 +33,8 @@ def create_app() -> FastAPI:
     app.include_router(orgs.router)
     app.include_router(counselor_enrollment.router)
     app.include_router(groups.router)
+    app.include_router(groups.member_router)
+    app.include_router(messaging.router)
     app.include_router(disbursements.router)
     app.include_router(admin.router)
     if settings.app_env == "test":
