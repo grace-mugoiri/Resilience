@@ -158,7 +158,9 @@ organization applies. It does not sign routine rosters. Instead it signs:
   `valid_from`, and NIP-40 `expiration` tags;
 - kind `30383` emergency revocations for a compromised operational key.
 
-An authorized operational key with `roster` scope signs the kind `30000` counselor roster. To
+An authorized operational key with `roster` scope signs the kind `30000` counselor roster. A
+separate online key may be authorized with `verification` scope to issue counselor invites and
+review encrypted credentials. To
 rotate, authorize a fresh operational key with the root, switch roster signing to it, and revoke
 the old key. Revocation is fail-closed: no later roster submission from that key is accepted,
 including a roster whose timestamp predates the revocation.
@@ -235,6 +237,26 @@ curl -s -X PUT -H "Content-Type: application/json" --data @/tmp/p1.json \
   "http://localhost:8000/v1/orgs/$ORG_ID/counsellors/$C1/profile" | jq
 curl -s "http://localhost:8000/v1/orgs/$ORG_ID/counsellors" | jq '.counsellors[] | {status, profile}'
 ```
+
+### Counselor enrollment
+
+Counselor onboarding is organization-invited and has two independent gates:
+
+1. a `verification`-scoped organization key issues a high-entropy, single-use code;
+2. the counselor claims it with NIP-98 and a kind `0` profile signed by her new local key;
+3. the counselor encrypts each credential to the review key named by the invitation and submits
+   only NIP-44 v2 ciphertext;
+4. the organization requests another encrypted copy, rejects, or approves the application;
+5. approval alone does not create a badge—the organization must publish a newer roster containing
+   the counselor key. Only then is the signed profile promoted into the public directory.
+
+Raw invite codes, filenames, and plaintext credentials are never persisted. Credential ciphertext
+is deleted after every review decision. The current MVP stores the ciphertext envelope in
+PostgreSQL; production should move the same opaque bytes to encrypted object storage with an
+explicit retention policy.
+
+The full route list and a signed curl walkthrough are in
+[`../docs/backend/RUNBOOK.md`](../docs/backend/RUNBOOK.md#counselor-enrollment-workflow).
 
 Protected API requests use a NIP-98 kind `27235` event. The `u` tag must contain the full public
 request URL, the `method` tag must match the HTTP method, and write requests must include the SHA-256

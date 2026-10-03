@@ -148,6 +148,13 @@ The authoritative request and response schemas are at `/docs` and `/openapi.json
 | PUT | `/v1/orgs/{org_id}/operational-keys/{pubkey}/revoke` | Root-signed body | Emergency key cancellation |
 | PUT | `/v1/orgs/{org_id}/roster` | Operational-key-signed body | Publish the counselor roster |
 | PUT | `/v1/orgs/{org_id}/counsellors/{pubkey}/profile` | Counselor-signed body | Publish a public counselor profile |
+| POST | `/v1/orgs/{org_id}/counselor-invites` | `verification` key + challenge | Create one-use counselor invitation |
+| POST | `/v1/counselor-enrollments/claim` | Counselor NIP-98 | Claim invitation with signed profile |
+| GET | `/v1/counselor-enrollments/{id}` | Owning counselor NIP-98 | Read onboarding status |
+| PUT | `/v1/counselor-enrollments/{id}/profile` | Owning counselor NIP-98 | Replace draft signed profile |
+| PUT | `/v1/counselor-enrollments/{id}/credentials` | Counselor challenge scope | Submit NIP-44 v2 ciphertext |
+| GET | `/v1/orgs/{org_id}/counselor-enrollments` | `verification` key | Review queue |
+| POST | `/v1/orgs/{org_id}/counselor-enrollments/{id}/{decision}` | `verification` key + challenge | Request information, approve, or reject |
 | GET | `/v1/admin/orgs?status=pending` | NIP-98 admin | List organizations by state |
 | POST | `/v1/admin/orgs/{org_id}/approve` | Admin challenge scope | Approve after NIP-05 verification |
 | POST | `/v1/admin/orgs/{org_id}/suspend` | Admin challenge scope | Suspend an organization |
@@ -174,6 +181,9 @@ group:create:<org UUID>
 group:member:<group UUID>
 disbursement:create:<org UUID>
 disbursement:approve:<disbursement UUID>
+counselor:invite:<org UUID>
+counselor:credentials:<enrollment UUID>
+counselor:review:<org UUID>
 ```
 
 ### Organization key and roster commands
@@ -190,7 +200,8 @@ Authorize the operational key for the needed responsibilities:
 
 ```bash
 python scripts/nostr_dev.py authorize-key --sec "$ORG_ROOT_SEC" \
-  --operational-pubkey "$OP_PUB" --scope roster --scope groups --scope payments \
+  --operational-pubkey "$OP_PUB" --scope roster --scope verification \
+  --scope groups --scope payments \
   > /tmp/operational-key.json
 curl -fsS -X PUT -H 'Content-Type: application/json' --data @/tmp/operational-key.json \
   "$API/v1/orgs/$ORG_ID/operational-keys" | jq
@@ -218,6 +229,44 @@ curl -fsS "$API/v1/orgs/$ORG_ID/counsellors" \
 
 Every counselor derived from the cancelled key should immediately show `removed`, and the signed
 revocation should be present in `roster_key_revocation`.
+
+### Counselor enrollment workflow
+
+The API exposes this workflow in Swagger at `http://localhost:8000/docs`. All writes use the same
+NIP-98 and one-use challenge mechanism described above. In order, a client should:
+
+1. Call `POST /v1/auth/challenges` with `counselor:invite:$ORG_ID`, then call
+   `POST /v1/orgs/$ORG_ID/counselor-invites` using a `verification`-scoped operational key. The body
+   supplies a dedicated credential-review encryption pubkey and an expiry of at most 168 hours.
+   Save the returned code—the API shows it only once.
+2. Generate the counselor identity locally. Sign the public profile with that key and claim the
+   code at `POST /v1/counselor-enrollments/claim` using NIP-98 from the same key.
+3. NIP-44-encrypt each PDF/JPEG/PNG to the invitation's `credential_recipient_pubkey`. Obtain scope
+   `counselor:credentials:$ENROLLMENT_ID` and submit the ciphertext envelopes to
+   `PUT /v1/counselor-enrollments/$ENROLLMENT_ID/credentials`.
+4. The review key reads `GET /v1/orgs/$ORG_ID/counselor-enrollments?status=under_review`. A
+   `verification`-scoped signer then obtains `counselor:review:$ORG_ID` and calls one of:
+   `request-information`, `approve`, or `reject`.
+5. After approval, publish a newer signed roster that includes the counselor pubkey. The API then
+   activates the already-signed profile. Until this step, `directory_status` remains `null` and the
+   counselor does not appear as verified.
+
+Example request bodies are visible in OpenAPI. The encrypted document object is deliberately
+minimal:
+
+```json
+{
+  "documents": [{
+    "v": 1,
+    "algorithm": "nip44-v2",
+    "recipient_pubkey": "<64-char review pubkey>",
+    "ciphertext": "<canonical base64 NIP-44 v2 payload>",
+    "media_type": "application/pdf"
+  }]
+}
+```
+
+Do not add legal names, filenames, license numbers, or other plaintext metadata to this payload.
 
 ### NIP-05 during local organization approval
 

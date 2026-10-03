@@ -59,7 +59,7 @@ def main() -> None:
             p.add_argument(
                 "--scope",
                 action="append",
-                choices=("roster", "groups", "payments"),
+                choices=("roster", "verification", "groups", "payments"),
                 help="repeat for each delegated scope; defaults to roster",
             )
         if name == "profile":
