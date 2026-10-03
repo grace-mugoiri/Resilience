@@ -79,6 +79,47 @@ From `backend/`:
 docker compose up --build
 ```
 
+The same operation is available through the checked-in run commands:
+
+```bash
+make up
+make ps
+make logs
+make down
+```
+
+Use a different environment profile without editing the Makefile:
+
+```bash
+make ENV_FILE=.env.staging up
+make ENV_FILE=.env.staging sign-config
+```
+
+For local Python debugging, start only PostgreSQL and run the desired process:
+
+```bash
+make db
+make migrate
+make api             # FastAPI with reload
+make worker          # in another terminal
+make relay-policy    # in another terminal
+```
+
+Open the repository root in VS Code to use the equivalent **Backend: FastAPI**, **Backend:
+Worker**, **Backend: Relay policy**, and **Backend: Python services** Run and Debug entries. The
+tasks menu also contains full-stack start, stop, logs, migration, and code checks. These debug
+profiles read `backend/.env`; use the Makefile commands when selecting another env file.
+
+Run the local quality checks with:
+
+```bash
+make lint
+make format-check
+make test
+# or all three
+make check
+```
+
 This starts PostgreSQL, the Nostr relay, the API, and the worker. The API applies database
 migrations on startup. Wait until the API container reports healthy. The services are available
 locally at:

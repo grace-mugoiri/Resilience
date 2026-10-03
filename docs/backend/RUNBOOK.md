@@ -78,6 +78,44 @@ Delete all local database and relay data only when intentionally starting over:
 docker compose down -v
 ```
 
+### Reusable run configurations
+
+The backend includes a `Makefile`, so terminal commands, CI, and editor tasks all use the same
+entry points:
+
+| Command | What it runs |
+|---|---|
+| `make up` | Build and start the complete Docker stack in the background |
+| `make down` | Stop the stack while preserving database and relay volumes |
+| `make ps` | Show container and health status |
+| `make logs` | Follow API, worker, policy, and relay logs |
+| `make db` | Start only PostgreSQL for local Python debugging |
+| `make migrate` | Start PostgreSQL and apply Alembic migrations |
+| `make api` | Migrate, then run FastAPI locally with reload |
+| `make worker` | Run the background worker locally |
+| `make relay-policy` | Run the relay admission service locally |
+| `make sign-config` | Sign client config using the selected env file |
+| `make lint` | Run `ruff check .` |
+| `make format-check` | Run `ruff format --check .` |
+| `make test` | Run the backend test suite |
+| `make check` | Run lint, formatting, and tests |
+
+All targets use `.env` by default. Select another profile with `ENV_FILE`:
+
+```bash
+make ENV_FILE=.env.staging up
+make ENV_FILE=.env.staging sign-config
+```
+
+The repository's `.vscode/launch.json` provides **Backend: FastAPI**, **Backend: Worker**,
+**Backend: Relay policy**, and a compound **Backend: Python services** launch. `.vscode/tasks.json`
+provides full-stack, logs, migration, and check tasks. Open the repository root—not `backend/`
+alone—so `${workspaceFolder}/backend` resolves correctly. The VS Code launch profiles read
+`backend/.env`; alternate profiles should use the Makefile commands.
+
+The local Python launch profiles do not start the two Nostr relay containers. Use `make up` when
+testing end-to-end relay delivery and failover.
+
 ## 4. Basic health checks
 
 ```bash
