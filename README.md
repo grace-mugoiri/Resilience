@@ -31,6 +31,18 @@ The **Talk to someone** counselor screens read the counselor directory from the 
 To use another address, copy `.env.example` to `.env.local` and change `VITE_API_BASE`, then
 restart `npm run dev`.
 
+For a deployed backend, copy `.env.production.example` to `.env.production` and set its API URL
+and the backend's `PLATFORM_PUBKEY`:
+
+```bash
+npm run dev                         # reads .env.local
+npm run build -- --mode production # reads .env.production
+```
+
+Do not put relay URLs in the frontend environment. The app verifies and reads them from the
+backend's signed `GET /v1/config` response, keeping API and relay configuration in one trusted
+deployment profile.
+
 The API must allow this app's address in its `CORS_ORIGINS` setting. For local development that
 is `http://localhost:5173`.
 

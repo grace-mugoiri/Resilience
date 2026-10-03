@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accountVault } from '../security/vault'
-import { accountIdentity, ChatSetupError, guestIdentity, Messenger, type ChatIdentity, type ChatMessage, type Role } from './chat'
+import { accountIdentity, ChatSetupError, guestIdentity, Messenger, type ChatIdentity, type ChatMessage, type Role, type SecureEvent } from './chat'
 
 export type ChatState =
   | { kind: 'starting' }
@@ -18,6 +18,7 @@ export type ChatState =
 export function useMessenger(role: Role, guest: boolean) {
   const [state, setState] = useState<ChatState>({ kind: 'starting' })
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [events, setEvents] = useState<SecureEvent[]>([])
   const messenger = useRef<Messenger | null>(null)
   const [live, setLive] = useState<Messenger | null>(null)
 
@@ -25,7 +26,7 @@ export function useMessenger(role: Role, guest: boolean) {
     setState({ kind: 'connecting' })
     try {
       messenger.current?.stop()
-      messenger.current = await Messenger.connect(identity, role, setMessages)
+      messenger.current = await Messenger.connect(identity, role, setMessages, setEvents)
       setLive(messenger.current)
       setState({ kind: 'ready', identity })
     } catch (error) {
@@ -61,5 +62,5 @@ export function useMessenger(role: Role, guest: boolean) {
     if (identity) await connect(identity)
   }, [connect])
 
-  return { state, messages, messenger: live, unlock, retry: start }
+  return { state, messages, events, messenger: live, unlock, retry: start }
 }

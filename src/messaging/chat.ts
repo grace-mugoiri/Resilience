@@ -10,7 +10,7 @@ import { API_BASE } from '../support/directory'
 import { bytesToHex } from '../security/encoding'
 import { privateDatabase } from '../security/privateDatabase'
 import { accountVault, GuestIdentity } from '../security/vault'
-import type { OpenedMessage, ResiliencePayload } from './envelope'
+import type { OpenedMessage, PayloadType, ResiliencePayload } from './envelope'
 import type { RelayMessagingClient } from './relayClient'
 import { createMessagingClient } from './service'
 
@@ -36,6 +36,16 @@ export type ChatMessage = {
   text: string
   createdAt: number
   status: 'sending' | 'sent' | 'received'
+}
+
+export type SecureEvent = {
+  id: string
+  type: Exclude<PayloadType, 'chat.message'>
+  conversationId: string
+  sender: string
+  fromMe: boolean
+  body: Record<string, unknown>
+  createdAt: number
 }
 
 export const MAX_TEXT = 2000
@@ -84,6 +94,11 @@ export interface MessageStore {
   removeConversation(conversationId: string): Promise<void>
 }
 
+export interface SecureEventStore {
+  all(): Promise<SecureEvent[]>
+  put(event: SecureEvent): Promise<void>
+}
+
 export class MemoryStore implements MessageStore {
   private items = new Map<string, ChatMessage>()
   async all() { return [...this.items.values()].sort((a, b) => a.createdAt - b.createdAt) }
@@ -91,6 +106,12 @@ export class MemoryStore implements MessageStore {
   async removeConversation(conversationId: string) {
     for (const [id, message] of this.items) if (message.conversationId === conversationId) this.items.delete(id)
   }
+}
+
+export class MemoryEventStore implements SecureEventStore {
+  private items = new Map<string, SecureEvent>()
+  async all() { return [...this.items.values()].sort((a, b) => a.createdAt - b.createdAt) }
+  async put(event: SecureEvent) { this.items.set(event.id, event) }
 }
 
 export class EncryptedStore implements MessageStore {
@@ -128,8 +149,35 @@ export class EncryptedStore implements MessageStore {
   }
 }
 
+export class EncryptedEventStore implements SecureEventStore {
+  constructor(private readonly identity: ChatIdentity) {}
+
+  private key() {
+    return this.identity.withPrivateKey((privateKey) =>
+      nip44.v2.utils.getConversationKey(privateKey, this.identity.publicKey))
+  }
+
+  async all() {
+    const key = this.key()
+    const records = await (await privateDatabase()).getAllFromIndex('events', 'by-created')
+    const events: SecureEvent[] = []
+    for (const record of records) {
+      try { events.push(JSON.parse(nip44.v2.decrypt(record.ciphertext, key)) as SecureEvent) }
+      catch { /* Belongs to another restored identity or is damaged. */ }
+    }
+    return events.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  async put(event: SecureEvent) {
+    const ciphertext = nip44.v2.encrypt(JSON.stringify(event), this.key())
+    await (await privateDatabase()).put('events', { id: event.id, createdAt: event.createdAt, ciphertext })
+  }
+}
+
 export const storeFor = (identity: ChatIdentity): MessageStore =>
   identity.guest ? new MemoryStore() : new EncryptedStore(identity)
+export const eventStoreFor = (identity: ChatIdentity): SecureEventStore =>
+  identity.guest ? new MemoryEventStore() : new EncryptedEventStore(identity)
 
 // ---- incoming messages ----------------------------------------------------------------------
 
@@ -211,11 +259,18 @@ export class Messenger {
     private readonly identity: ChatIdentity,
     private readonly role: Role,
     private readonly store: MessageStore,
+    private readonly eventStore: SecureEventStore,
     private readonly client: RelayMessagingClient,
     private readonly onChange: (messages: ChatMessage[]) => void,
+    private readonly onEvents: (events: SecureEvent[]) => void,
   ) {}
 
-  static async connect(identity: ChatIdentity, role: Role, onChange: (messages: ChatMessage[]) => void) {
+  static async connect(
+    identity: ChatIdentity,
+    role: Role,
+    onChange: (messages: ChatMessage[]) => void,
+    onEvents: (events: SecureEvent[]) => void = () => undefined,
+  ) {
     let platformPublicKey: string
     try {
       platformPublicKey = requirePlatformPublicKey()
@@ -223,13 +278,15 @@ export class Messenger {
       throw new ChatSetupError(error instanceof Error ? error.message : 'The platform public key is invalid.')
     }
     const store = storeFor(identity)
+    const eventStore = eventStoreFor(identity)
     const client = await createMessagingClient({
       apiBase: API_BASE,
       platformPublicKey,
       withPrivateKey: identity.withPrivateKey,
     })
-    const messenger = new Messenger(identity, role, store, client, onChange)
+    const messenger = new Messenger(identity, role, store, eventStore, client, onChange, onEvents)
     onChange(await store.all())
+    onEvents(await eventStore.all())
     client.start((opened) => messenger.receive(opened))
     return messenger
   }
@@ -239,6 +296,21 @@ export class Messenger {
 
   private receive(opened: OpenedMessage) {
     this.queue = this.queue.then(async () => {
+      if (opened.payload.type !== 'chat.message') {
+        const known = await this.eventStore.all()
+        if (known.some((event) => event.id === opened.payload.client_message_id)) return
+        await this.eventStore.put({
+          id: opened.payload.client_message_id,
+          type: opened.payload.type,
+          conversationId: opened.payload.conversation_id,
+          sender: opened.senderPublicKey,
+          fromMe: opened.senderPublicKey === this.identity.publicKey,
+          body: opened.payload.body,
+          createdAt: opened.createdAt,
+        })
+        this.onEvents(await this.eventStore.all())
+        return
+      }
       const message = interpretIncoming(opened, this.identity.publicKey, this.role, await this.store.all())
       if (!message) return
       await this.store.put(message)
@@ -276,6 +348,37 @@ export class Messenger {
         : { text: body },
     }
     await this.client.send([peer], payload)
+  }
+
+  async sendEvent(
+    recipients: string[],
+    type: Exclude<PayloadType, 'chat.message'>,
+    conversationId: string,
+    body: Record<string, unknown>,
+  ) {
+    if (!recipients.length || recipients.some((peer) => !HEX64.test(peer))) {
+      throw new Error('Unknown recipient')
+    }
+    const id = crypto.randomUUID()
+    const event: SecureEvent = {
+      id,
+      type,
+      conversationId,
+      sender: this.identity.publicKey,
+      fromMe: true,
+      body,
+      createdAt: Math.floor(Date.now() / 1000),
+    }
+    await this.eventStore.put(event)
+    this.onEvents(await this.eventStore.all())
+    await this.client.send(recipients, {
+      v: 1,
+      type,
+      conversation_id: conversationId,
+      client_message_id: id,
+      body,
+    })
+    return id
   }
 
   async clearConversation(conversationId: string) {
