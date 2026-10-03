@@ -36,7 +36,15 @@ def _encode(value: bytes) -> str:
 
 
 def _decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if not value or "=" in value:
+        raise ValueError("member box uses invalid base64url encoding")
+    decoded = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+    # Unpadded Base64 can otherwise accept different final characters whose unused
+    # padding bits decode to the same bytes. Require the one canonical spelling so
+    # every textual mutation of a stored box is detected.
+    if _encode(decoded) != value:
+        raise ValueError("member box uses non-canonical base64url encoding")
+    return decoded
 
 
 def seal_member_pubkey(settings: Settings, pubkey: str, context: str) -> str:
