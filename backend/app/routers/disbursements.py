@@ -1,28 +1,37 @@
-"""Privacy-minimizing disbursement records with challenge-bound multi-party approval."""
+"""Non-custodial emergency disbursements: two-person approval, then invoice, payment and proof."""
 
-import hashlib
-import json
 import uuid
-from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.nip98 import NostrPubkey
 from app.auth.scoped import require_scoped_authorization
-from app.db.models import (
-    CounsellorAttestation,
-    Disbursement,
-    DisbursementApproval,
-    DisbursementTransition,
-    Organization,
-    OrganizationOperationalKey,
-)
 from app.db.session import get_db
+from app.payments.contracts import InvoiceDecodeError
+from app.payments.invoice import parse_invoice
+from app.payments.schemas import (
+    DisbursementIn,
+    DisbursementOut,
+    InvoiceAttach,
+    PaymentProof,
+    State,
+)
+from app.payments.service import (
+    DisbursementError,
+    approve_disbursement,
+    can_read,
+    cancel_disbursement,
+    create_disbursement,
+    get_disbursement,
+    list_disbursements,
+    mark_paying,
+    submit_preimage,
+    to_out,
+)
+from app.payments.service import attach_invoice as service_attach_invoice
 from app.settings import Settings, get_settings
 
 router = APIRouter(tags=["disbursements"])
@@ -32,72 +41,21 @@ CreateActor = Annotated[str, Depends(require_scoped_authorization("disbursement:
 ApproveActor = Annotated[
     str, Depends(require_scoped_authorization("disbursement:approve:{disbursement_id}"))
 ]
-IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=120)]
+IdempotencyKey = Annotated[
+    str,
+    Header(alias="Idempotency-Key", min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._~-]+$"),
+]
 
 
-class DisbursementIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    amount_sat: int = Field(gt=0)
-    amount_kes: int = Field(gt=0)
-    rate_source: str = Field(min_length=1, max_length=120)
-    reason_code: Literal["transport", "pharmacy", "shelter", "food", "other"]
-
-
-class DisbursementOut(BaseModel):
-    id: uuid.UUID
-    org_id: uuid.UUID
-    amount_sat: int
-    amount_kes: int
-    rate_source: str
-    reason_code: str
-    state: str
-    approval_count: int
-    approvals_required: int
-    ready: bool
-    created_at: datetime
-
-
-def _active_counsellor(db: Session, org_id: uuid.UUID, pubkey: str) -> bool:
-    attestation = db.get(CounsellorAttestation, (org_id, pubkey))
-    now = datetime.now(UTC)
-    return bool(
-        attestation
-        and attestation.active
-        and (attestation.expires_at is None or attestation.expires_at > now)
-    )
-
-
-def _payment_key(db: Session, org_id: uuid.UUID, pubkey: str) -> bool:
-    key = db.get(OrganizationOperationalKey, (org_id, pubkey))
-    now = datetime.now(UTC)
-    return bool(
-        key
-        and "payments" in key.scopes
-        and key.valid_from <= now < key.expires_at
-        and key.revoked_at is None
-    )
-
-
-def _out(db: Session, row: Disbursement, settings: Settings) -> DisbursementOut:
-    count = db.scalar(
-        select(func.count())
-        .select_from(DisbursementApproval)
-        .where(DisbursementApproval.disbursement_id == row.id)
-    )
-    approval_count = int(count or 0)
-    return DisbursementOut(
-        id=row.id,
-        org_id=row.org_id,
-        amount_sat=row.amount_sat,
-        amount_kes=row.amount_kes,
-        rate_source=row.rate_source,
-        reason_code=row.reason_code,
-        state=row.state,
-        approval_count=approval_count,
-        approvals_required=settings.disbursement_approval_threshold,
-        ready=approval_count >= settings.disbursement_approval_threshold,
-        created_at=row.created_at,
-    )
+def fail(db: Session, exc: Exception) -> NoReturn:
+    db.rollback()
+    if isinstance(exc, DisbursementError):
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    if isinstance(exc, InvoiceDecodeError):
+        raise HTTPException(409, str(exc)) from exc
+    if isinstance(exc, IntegrityError):
+        raise HTTPException(409, "request conflicts with an existing disbursement; retry") from exc
+    raise exc
 
 
 @router.post(
@@ -105,125 +63,126 @@ def _out(db: Session, row: Disbursement, settings: Settings) -> DisbursementOut:
     status_code=status.HTTP_201_CREATED,
     response_model=DisbursementOut,
 )
-def create_disbursement(
+def create(
     org_id: uuid.UUID,
     body: DisbursementIn,
     request: Request,
+    response: Response,
     actor: CreateActor,
     idempotency_key: IdempotencyKey,
     db: Db,
     settings: SettingsDep,
 ) -> DisbursementOut:
-    org = db.get(Organization, org_id)
-    if org is None or org.status != "approved":
-        raise HTTPException(404, "organisation not found")
-    if not _active_counsellor(db, org_id, actor):
-        raise HTTPException(403, "an active counsellor may create this request")
-    canonical = json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()
-    request_hash = hashlib.sha256(canonical).hexdigest()
-    existing = db.scalar(
-        select(Disbursement).where(
-            Disbursement.org_id == org_id,
-            Disbursement.idempotency_key == idempotency_key,
-        )
-    )
-    if existing is not None:
-        if existing.request_hash != request_hash:
-            raise HTTPException(409, "idempotency key was already used for another request")
-        return _out(db, existing, settings)
-    if org.per_payment_cap_sat and body.amount_sat > org.per_payment_cap_sat:
-        raise HTTPException(422, "amount exceeds the organization per-payment cap")
-    if org.daily_cap_sat:
-        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        used = db.scalar(
-            select(func.coalesce(func.sum(Disbursement.amount_sat), 0)).where(
-                Disbursement.org_id == org_id,
-                Disbursement.created_at >= day_start,
-                Disbursement.state.not_in(("EXPIRED", "FAILED", "CANCELLED")),
-            )
-        )
-        if int(used or 0) + body.amount_sat > org.daily_cap_sat:
-            raise HTTPException(422, "amount exceeds the organization daily cap")
-    row = Disbursement(
-        org_id=org_id,
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
-        amount_sat=body.amount_sat,
-        amount_kes=body.amount_kes,
-        rate_source=body.rate_source,
-        reason_code=body.reason_code,
-        created_by_pubkey=actor,
-    )
-    db.add(row)
-    db.flush()
-    db.add_all(
-        [
-            DisbursementApproval(
-                disbursement_id=row.id,
-                actor_pubkey=actor,
-                auth_event_id=request.state.nostr_event["id"],
-            ),
-            DisbursementTransition(
-                disbursement_id=row.id,
-                from_state=None,
-                to_state="CREATED",
-                actor_pubkey=actor,
-            ),
-        ]
-    )
     try:
+        item, created = create_disbursement(
+            db, org_id, actor, request.state.nostr_event["id"], body, idempotency_key
+        )
         db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(409, "disbursement was created concurrently; retry safely") from exc
-    return _out(db, row, settings)
+    except (DisbursementError, IntegrityError) as exc:
+        fail(db, exc)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return to_out(db, item, settings)
+
+
+@router.get("/v1/orgs/{org_id}/disbursements", response_model=list[DisbursementOut])
+def list_items(
+    org_id: uuid.UUID,
+    actor: NostrPubkey,
+    db: Db,
+    settings: SettingsDep,
+    state: State | None = None,
+) -> list[DisbursementOut]:
+    try:
+        return [to_out(db, row, settings) for row in list_disbursements(db, org_id, actor, state)]
+    except DisbursementError as exc:
+        fail(db, exc)
 
 
 @router.post("/v1/disbursements/{disbursement_id}/approve", response_model=DisbursementOut)
-def approve_disbursement(
+def approve(
     disbursement_id: uuid.UUID,
     request: Request,
     actor: ApproveActor,
     db: Db,
     settings: SettingsDep,
 ) -> DisbursementOut:
-    row = db.get(Disbursement, disbursement_id)
-    if row is None:
-        raise HTTPException(404, "disbursement not found")
-    if row.state != "CREATED":
-        raise HTTPException(409, "only a created disbursement can be approved")
-    if actor == row.created_by_pubkey:
-        raise HTTPException(403, "approval must come from a second person")
-    if not _payment_key(db, row.org_id, actor):
-        raise HTTPException(403, "an active organization payments key must approve")
-    approval = DisbursementApproval(
-        disbursement_id=row.id,
-        actor_pubkey=actor,
-        auth_event_id=request.state.nostr_event["id"],
-    )
-    db.add(approval)
     try:
+        item = get_disbursement(db, disbursement_id, lock=True)
+        approve_disbursement(db, item, actor, request.state.nostr_event["id"])
         db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        # An already recorded actor approval is idempotent, but another event reusing an auth
-        # id is not. NIP-98 and challenge replay checks normally reject it before this point.
-        existing = db.get(DisbursementApproval, (row.id, actor))
-        if existing is None:
-            raise HTTPException(409, "approval conflict") from exc
-    return _out(db, row, settings)
+    except (DisbursementError, IntegrityError) as exc:
+        fail(db, exc)
+    return to_out(db, item, settings)
 
 
 @router.get("/v1/disbursements/{disbursement_id}", response_model=DisbursementOut)
-def get_disbursement(
+def read(
+    disbursement_id: uuid.UUID, actor: NostrPubkey, db: Db, settings: SettingsDep
+) -> DisbursementOut:
+    try:
+        item = get_disbursement(db, disbursement_id)
+    except DisbursementError as exc:
+        fail(db, exc)
+    if not can_read(db, item, actor):
+        raise HTTPException(403, "not authorized for this disbursement")
+    return to_out(db, item, settings)
+
+
+@router.post("/v1/disbursements/{disbursement_id}/invoice", response_model=DisbursementOut)
+def add_invoice(
     disbursement_id: uuid.UUID,
+    body: InvoiceAttach,
     actor: NostrPubkey,
     db: Db,
     settings: SettingsDep,
 ) -> DisbursementOut:
-    row = db.get(Disbursement, disbursement_id)
-    if row is None:
-        raise HTTPException(404, "disbursement not found")
-    if actor != row.created_by_pubkey and not _payment_key(db, row.org_id, actor):
-        raise HTTPException(403, "not authorized for this disbursement")
-    return _out(db, row, settings)
+    try:
+        item = get_disbursement(db, disbursement_id, lock=True)
+        details = parse_invoice(body.invoice, settings.lightning_network)
+        item = service_attach_invoice(db, item, actor, body.invoice, details, settings)
+        db.commit()
+    except (DisbursementError, InvoiceDecodeError, IntegrityError) as exc:
+        fail(db, exc)
+    return to_out(db, item, settings)
+
+
+@router.post("/v1/disbursements/{disbursement_id}/paying", response_model=DisbursementOut)
+def begin_payment(
+    disbursement_id: uuid.UUID, actor: NostrPubkey, db: Db, settings: SettingsDep
+) -> DisbursementOut:
+    try:
+        item = mark_paying(db, get_disbursement(db, disbursement_id, lock=True), actor)
+        db.commit()
+    except (DisbursementError, IntegrityError) as exc:
+        fail(db, exc)
+    return to_out(db, item, settings)
+
+
+@router.post("/v1/disbursements/{disbursement_id}/proof", response_model=DisbursementOut)
+def payment_proof(
+    disbursement_id: uuid.UUID,
+    body: PaymentProof,
+    actor: NostrPubkey,
+    db: Db,
+    settings: SettingsDep,
+) -> DisbursementOut:
+    try:
+        item = get_disbursement(db, disbursement_id, lock=True)
+        item = submit_preimage(db, item, actor, body.preimage)
+        db.commit()
+    except (DisbursementError, IntegrityError) as exc:
+        fail(db, exc)
+    return to_out(db, item, settings)
+
+
+@router.post("/v1/disbursements/{disbursement_id}/cancel", response_model=DisbursementOut)
+def cancel(
+    disbursement_id: uuid.UUID, actor: NostrPubkey, db: Db, settings: SettingsDep
+) -> DisbursementOut:
+    try:
+        item = cancel_disbursement(db, get_disbursement(db, disbursement_id, lock=True), actor)
+        db.commit()
+    except (DisbursementError, IntegrityError) as exc:
+        fail(db, exc)
+    return to_out(db, item, settings)

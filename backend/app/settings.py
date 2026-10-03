@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Dev and test only: fetch nostr.json from this base URL instead of https://<domain>.
     # Ignored unless APP_ENV is "dev" or "test".
     nip05_dev_base_url: str | None = None
+    # BOLT11 network an attached invoice must be for: bc, tb, bcrt or tbs (signet).
+    lightning_network: str = "tbs"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -74,6 +76,13 @@ class Settings(BaseSettings):
         if v < 2:
             raise ValueError("DISBURSEMENT_APPROVAL_THRESHOLD must be at least 2")
         return v
+
+    @field_validator("lightning_network")
+    @classmethod
+    def valid_lightning_network(cls, value: str) -> str:
+        if value not in {"bc", "tb", "bcrt", "tbs"}:
+            raise ValueError("LIGHTNING_NETWORK must be bc, tb, bcrt, or tbs")
+        return value
 
     @field_validator("platform_pubkey", "nip05_dev_base_url", mode="before")
     @classmethod
