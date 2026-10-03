@@ -26,6 +26,16 @@ def test_wildcard_cors_is_refused():
         Settings(cors_origins="*")
 
 
+def test_client_config_requires_two_distinct_relays():
+    with pytest.raises(ValidationError):
+        Settings(client_relay_urls="wss://relay.example,wss://relay.example")
+
+
+def test_production_alias_requires_strong_policy_secrets():
+    with pytest.raises(ValidationError):
+        Settings(app_env="prod", relay_policy_hmac_key="short")
+
+
 def test_purge_removes_only_old_auth_events():
     with get_engine().begin() as conn:
         conn.execute(text("DELETE FROM seen_auth_events"))

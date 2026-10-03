@@ -248,9 +248,7 @@ class SupportGroup(Base):
     """A private-message room with public discovery copy and private membership."""
 
     __tablename__ = "support_groups"
-    __table_args__ = (
-        CheckConstraint(_in("access", GROUP_ACCESS_MODES), name="ck_group_access"),
-    )
+    __table_args__ = (CheckConstraint(_in("access", GROUP_ACCESS_MODES), name="ck_group_access"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(

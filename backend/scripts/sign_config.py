@@ -45,9 +45,7 @@ def main() -> None:
     parsed = json.loads(content)
     settings = Settings(_env_file=args.env_file)
     parsed["relays"] = settings.client_relay_urls
-    parsed["approved_orgs_list"] = (
-        settings.approved_orgs_list or f"30000:{pubkey}:approved-orgs"
-    )
+    parsed["approved_orgs_list"] = settings.approved_orgs_list or f"30000:{pubkey}:approved-orgs"
     content = json.dumps(parsed, separators=(",", ":"), sort_keys=True)
     if parsed.get("schema_version") != 1:
         sys.exit("client config schema_version must be 1")

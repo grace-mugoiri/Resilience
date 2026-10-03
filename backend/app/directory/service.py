@@ -262,8 +262,7 @@ def counsellors_of(db: Session, org: Organization) -> CounsellorsOut:
         )
         .outerjoin(
             CounsellorAvailability,
-            CounsellorAvailability.counsellor_pubkey
-            == CounsellorAttestation.counsellor_pubkey,
+            CounsellorAvailability.counsellor_pubkey == CounsellorAttestation.counsellor_pubkey,
         )
         .where(CounsellorAttestation.org_id == org.id)
     ).all()

@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     def strong_policy_key(cls, v: str, info) -> str:
         # Tests and local development deliberately use a documented throwaway value.
         app_env = info.data.get("app_env", "dev")
-        if app_env == "production" and len(v.encode()) < 32:
+        if app_env in {"prod", "production"} and len(v.encode()) < 32:
             raise ValueError(f"{info.field_name.upper()} must be at least 32 bytes in production")
         return v
 

@@ -127,15 +127,17 @@ def _blocked(db: Session, sender: str, recipient: str, settings: Settings) -> bo
     recipient_hash = blind_pubkey(settings.relay_policy_hmac_key, recipient)
     return bool(
         db.scalar(
-            select(exists().where(
-                BlockedPeer.active.is_(True),
-                or_(
-                    (BlockedPeer.blocker_hash == sender_hash) &
-                    (BlockedPeer.blocked_hash == recipient_hash),
-                    (BlockedPeer.blocker_hash == recipient_hash) &
-                    (BlockedPeer.blocked_hash == sender_hash),
-                ),
-            ))
+            select(
+                exists().where(
+                    BlockedPeer.active.is_(True),
+                    or_(
+                        (BlockedPeer.blocker_hash == sender_hash)
+                        & (BlockedPeer.blocked_hash == recipient_hash),
+                        (BlockedPeer.blocker_hash == recipient_hash)
+                        & (BlockedPeer.blocked_hash == sender_hash),
+                    ),
+                )
+            )
         )
     )
 
