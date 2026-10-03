@@ -25,6 +25,7 @@ export type RelayDelivery = {
 
 /** One chat message, encrypted to the account's own key (NIP-44), so it is unreadable while locked. */
 export type StoredMessage = { id: string; createdAt: number; ciphertext: string }
+export type StoredSecureEvent = { id: string; createdAt: number; ciphertext: string }
 
 export type OutboxRecord = {
   id: string
@@ -39,12 +40,13 @@ interface ResiliencePrivateDatabase extends DBSchema {
   outbox: { key: string; value: OutboxRecord; indexes: { 'by-created': number } }
   seen: { key: string; value: { id: string; seenAt: number }; indexes: { 'by-seen': number } }
   messages: { key: string; value: StoredMessage; indexes: { 'by-created': number } }
+  events: { key: string; value: StoredSecureEvent; indexes: { 'by-created': number } }
 }
 
 let databasePromise: Promise<IDBPDatabase<ResiliencePrivateDatabase>> | undefined
 
 export const privateDatabase = () => {
-  databasePromise ??= openDB<ResiliencePrivateDatabase>('resilience-private', 2, {
+  databasePromise ??= openDB<ResiliencePrivateDatabase>('resilience-private', 3, {
     upgrade(database, oldVersion) {
       if (oldVersion < 1) {
         database.createObjectStore('vault', { keyPath: 'id' })
@@ -58,6 +60,10 @@ export const privateDatabase = () => {
         const messages = database.createObjectStore('messages', { keyPath: 'id' })
         messages.createIndex('by-created', 'createdAt')
       }
+      if (oldVersion < 3) {
+        const events = database.createObjectStore('events', { keyPath: 'id' })
+        events.createIndex('by-created', 'createdAt')
+      }
     },
   })
   return databasePromise
@@ -69,4 +75,3 @@ export const closePrivateDatabase = async () => {
   database.close()
   databasePromise = undefined
 }
-

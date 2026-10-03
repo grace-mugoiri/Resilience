@@ -35,6 +35,9 @@ export type Counselor = {
   verified_until: string | null
   profile: CounselorProfile | null
   profile_event: SignedEvent | null
+  available: boolean
+  working_hours: string | null
+  availability_event: SignedEvent | null
 }
 
 export type CounselorDirectory = {
@@ -133,7 +136,17 @@ export type CounselorInviteRecord = {
 
 export type CounselorEnrollmentFilter = CounselorEnrollmentStatus | undefined
 
-export type SupportGroup = { id: string; org_id: string; active: boolean }
+export type SupportGroup = {
+  id: string
+  org_id: string
+  active: boolean
+  slug: string | null
+  title: string | null
+  description: string | null
+  access: 'open' | 'request'
+  leader_name: string | null
+  organization_name: string | null
+}
 export type MembershipInput = {
   role?: 'member' | 'moderator'
   expires_at?: string | null
@@ -143,6 +156,22 @@ export type Membership = {
   role: string
   active: boolean
   expires_at: string | null
+}
+
+export type GroupJoin = {
+  group_id: string
+  status: 'pending' | 'approved' | 'rejected'
+  role?: string | null
+}
+
+export type CircleInvite = { circle_id: string; code: string; expires_at: string }
+export type CircleClaim = { circle_id: string; inviter_pubkey: string }
+export type CircleStatus = { circle_id: string | null; member_count: number; owner: boolean }
+export type SafetyReport = { id: string; status: string; created_at: string }
+export type CounselorAvailability = {
+  available: boolean
+  working_hours: string | null
+  updated_at: string
 }
 
 export type DisbursementInput = {

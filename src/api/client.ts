@@ -4,6 +4,9 @@ import { readClientConfiguration, type ClientConfiguration } from '../messaging/
 import { NostrHttpSigner } from './nip98'
 import type {
   AuthorizationChallenge,
+  CircleClaim,
+  CircleInvite,
+  CircleStatus,
   Counselor,
   CounselorDirectory,
   CounselorEnrollment,
@@ -11,12 +14,14 @@ import type {
   CounselorInvite,
   CounselorInviteInput,
   CounselorInviteRecord,
+  CounselorAvailability,
   Disbursement,
   DisbursementInput,
   EncryptedCredential,
   Health,
   Membership,
   MembershipInput,
+  GroupJoin,
   OperationalKey,
   Organization,
   OrganizationAccess,
@@ -24,6 +29,7 @@ import type {
   OrganizationDashboard,
   OrganizationStatus,
   SupportGroup,
+  SafetyReport,
   WhoAmI,
 } from './types'
 
@@ -147,6 +153,83 @@ export class ResilienceApi {
 
   listOrganizations(signal?: AbortSignal) {
     return this.request<Organization[]>('/v1/orgs', { signal })
+  }
+
+  listSupportGroups(signal?: AbortSignal) {
+    return this.request<SupportGroup[]>('/v1/support-groups', { signal })
+  }
+
+  groupMembership(groupId: string) {
+    return this.request<GroupJoin>(`/v1/support-groups/${enc(groupId)}/membership`, {
+      auth: 'basic',
+    })
+  }
+
+  joinSupportGroup(groupId: string) {
+    return this.request<GroupJoin>(`/v1/support-groups/${enc(groupId)}/join`, {
+      method: 'POST', body: {}, auth: 'basic',
+    })
+  }
+
+  leaveSupportGroup(groupId: string) {
+    return this.request<GroupJoin>(`/v1/support-groups/${enc(groupId)}/membership`, {
+      method: 'DELETE', auth: 'basic',
+    })
+  }
+
+  createCircleInvite() {
+    return this.request<CircleInvite>('/v1/circle/invites', {
+      method: 'POST', body: {}, auth: 'basic',
+    })
+  }
+
+  claimCircleInvite(code: string) {
+    return this.request<CircleClaim>('/v1/circle/invites/claim', {
+      method: 'POST', body: { code }, auth: 'basic',
+    })
+  }
+
+  circleStatus() {
+    return this.request<CircleStatus>('/v1/circle', { auth: 'basic' })
+  }
+
+  removeCircleMember(circleId: string, peerPubkey: string) {
+    return this.request<CircleStatus>(
+      `/v1/circle/${enc(circleId)}/members/${enc(peerPubkey)}`,
+      { method: 'DELETE', auth: 'basic' },
+    )
+  }
+
+  blockPeer(peerPubkey: string) {
+    return this.request<{ blocked_pubkey: string; active: boolean }>(
+      `/v1/blocks/${enc(peerPubkey)}`,
+      { method: 'PUT', body: {}, auth: 'basic' },
+    )
+  }
+
+  unblockPeer(peerPubkey: string) {
+    return this.request<{ blocked_pubkey: string; active: boolean }>(
+      `/v1/blocks/${enc(peerPubkey)}`,
+      { method: 'DELETE', auth: 'basic' },
+    )
+  }
+
+  createReport(input: {
+    subject_pubkey: string
+    reason: 'harassment' | 'personal_details' | 'impersonation' | 'spam' | 'other'
+    evidence?: string[] | null
+  }) {
+    return this.request<SafetyReport>('/v1/reports', {
+      method: 'POST', body: input, auth: 'basic',
+    })
+  }
+
+  setCounselorAvailability(available: boolean, workingHours: string | null) {
+    return this.request<CounselorAvailability>('/v1/counselors/me/availability', {
+      method: 'PUT',
+      body: { available, working_hours: workingHours },
+      auth: 'basic',
+    })
   }
 
   applyOrganization(application: OrganizationApplication) {
