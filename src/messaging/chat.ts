@@ -5,6 +5,7 @@
 // For a guest they live in memory and disappear with the guest key when she leaves.
 import { nip44 } from 'nostr-tools'
 import { sha256 } from '@noble/hashes/sha2.js'
+import { requirePlatformPublicKey } from '../config/runtime'
 import { API_BASE } from '../support/directory'
 import { bytesToHex } from '../security/encoding'
 import { privateDatabase } from '../security/privateDatabase'
@@ -202,8 +203,6 @@ export function conversationsOf(messages: ChatMessage[]): Conversation[] {
 
 // ---- the live connection --------------------------------------------------------------------
 
-const PLATFORM_PUBKEY = (import.meta.env.VITE_PLATFORM_PUBKEY || '').trim().toLowerCase()
-
 export class ChatSetupError extends Error {}
 
 /** Connects to the relays named in the signed client configuration and keeps the store up to date. */
@@ -217,13 +216,16 @@ export class Messenger {
   ) {}
 
   static async connect(identity: ChatIdentity, role: Role, onChange: (messages: ChatMessage[]) => void) {
-    if (!HEX64.test(PLATFORM_PUBKEY)) {
-      throw new ChatSetupError('VITE_PLATFORM_PUBKEY is not set, so the app cannot check which relays to use.')
+    let platformPublicKey: string
+    try {
+      platformPublicKey = requirePlatformPublicKey()
+    } catch (error) {
+      throw new ChatSetupError(error instanceof Error ? error.message : 'The platform public key is invalid.')
     }
     const store = storeFor(identity)
     const client = await createMessagingClient({
       apiBase: API_BASE,
-      platformPublicKey: PLATFORM_PUBKEY,
+      platformPublicKey,
       withPrivateKey: identity.withPrivateKey,
     })
     const messenger = new Messenger(identity, role, store, client, onChange)
