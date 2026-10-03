@@ -25,6 +25,7 @@ from tests.helpers import (
 APPLY = {
     "name": "Wangu Centre",
     "domain": "Wangu.ORG",
+    "focus_areas": ["Legal aid", "Safe shelter"],
     "directory_visibility": "public",
 }
 
@@ -51,6 +52,7 @@ def test_apply_creates_a_pending_org_owned_by_the_signer(client):
     assert org["nip05"] == "_@wangu.org"
     assert org["nostr_pubkey"] == ORG_PUBKEY
     assert org["directory_visibility"] == "public"
+    assert org["focus_areas"] == ["Legal aid", "Safe shelter"]
     assert org["status"] == "pending"
 
 
@@ -76,6 +78,18 @@ def test_apply_needs_a_signature(client):
         },  # cannot self-approve
         {"name": "Wangu", "domain": "wangu.org"},  # privacy decision is required
         {"name": "Wangu", "domain": "wangu.org", "directory_visibility": "private"},
+        {
+            "name": "Wangu",
+            "domain": "wangu.org",
+            "directory_visibility": "public",
+            "focus_areas": ["Unrecognized sector"],
+        },
+        {
+            "name": "Wangu",
+            "domain": "wangu.org",
+            "directory_visibility": "public",
+            "focus_areas": ["Legal aid"] * 6,
+        },
     ],
 )
 def test_apply_rejects_bad_input(client, payload):

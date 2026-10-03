@@ -69,6 +69,7 @@ class Organization(Base):
     directory_visibility: Mapped[str] = mapped_column(
         Text, default="public", server_default="public"
     )
+    focus_areas: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     nip05_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     per_payment_cap_sat: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     daily_cap_sat: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

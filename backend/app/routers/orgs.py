@@ -68,6 +68,7 @@ def apply(body: OrgApplication, pubkey: NostrPubkey, db: Db) -> OrgOut:
         domain=domain,
         nostr_pubkey=pubkey,
         directory_visibility=body.directory_visibility,
+        focus_areas=body.focus_areas,
     )
     db.add(org)
     try:
