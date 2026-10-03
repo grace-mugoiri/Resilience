@@ -17,8 +17,8 @@
   and emergency revocation events are stored and returned for client verification.
 - Organization applications explicitly consent to a public counselor directory; the privacy
   implications of kind 30000 `p` tags are documented.
-- Single-use, hashed counselor invitations; counselor-signed onboarding profiles; NIP-44 v2
-  encrypted credential submission; organization review states; and roster-gated activation.
+- Single-use, hashed counselor invitations; counselor-signed onboarding profiles; hybrid
+  AES-256-GCM/NIP-44 credential encryption; organization review states; and roster-gated activation.
 - CORS allows the Vite web client (`http://localhost:5173`) in the local example settings.
 - Background cleanup of expired NIP-98 replay records.
 - Nostr relay configuration with NIP-42 authentication, recipient-only delivery for gift-wrapped

@@ -145,8 +145,8 @@ pytest -v
 ## Test signing helpers
 
 `scripts/nostr_dev.py` provides development-only helpers for creating Nostr test keys, NIP-98
-headers, NIP-05 test files, operational-key authorizations/revocations, signed counsellor rosters,
-and signed counsellor profiles. Use only throwaway secret keys with this script. Run
+headers, NIP-05 test files, operational-key authorizations/revocations, one-use counselor invites,
+signed counsellor rosters, and signed counsellor profiles. Use only throwaway secret keys with this script. Run
 `python scripts/nostr_dev.py --help` for usage.
 
 ### Organization key hierarchy
@@ -172,8 +172,24 @@ response includes the root-signed cancellation as `roster_key_revocation`.
 
 ### Sensitive approval commands
 
+For the complete local-only flow, including a temporary NIP-05 fixture and development admin key:
+
+```bash
+.venv/bin/python scripts/local_approve_org.py
+# Optional when more than one application is pending:
+.venv/bin/python scripts/local_approve_org.py --org-id <organization UUID>
+```
+
 Approval and suspension calls use a short-lived, one-use server challenge in addition to NIP-98.
-With `ADMIN_SEC`, `ORG_ID`, and `API` set, approve an organization like this:
+With `ADMIN_SEC`, `ORG_ID`, and `API` set, the development helper performs the complete
+challenge-bound organization approval:
+
+```bash
+python scripts/nostr_dev.py organization-approve \
+  --sec "$ADMIN_SEC" --api "$API" --org-id "$ORG_ID"
+```
+
+The equivalent low-level sequence is:
 
 ```bash
 SCOPE="admin:org:approve:$ORG_ID"
@@ -234,8 +250,8 @@ Counselor onboarding is organization-invited and has two independent gates:
 
 1. a `verification`-scoped organization key issues a high-entropy, single-use code;
 2. the counselor claims it with NIP-98 and a kind `0` profile signed by her new local key;
-3. the counselor encrypts each credential to the review key named by the invitation and submits
-   only NIP-44 v2 ciphertext;
+3. the counselor encrypts each credential with a fresh AES-256-GCM key and NIP-44-wraps that key to
+   the review key named by the invitation;
 4. the organization requests another encrypted copy, rejects, or approves the application;
 5. approval alone does not create a badge—the organization must publish a newer roster containing
    the counselor key. Only then is the signed profile promoted into the public directory.

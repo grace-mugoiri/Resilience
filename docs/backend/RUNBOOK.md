@@ -115,6 +115,13 @@ Sensitive writes additionally require a one-use challenge. First request a chall
 its exact scope and value in the signed operation:
 
 ```bash
+python scripts/nostr_dev.py organization-approve \
+  --sec "$ADMIN_SEC" --api "$API" --org-id "$ORG_ID"
+```
+
+The equivalent low-level calls are:
+
+```bash
 SCOPE="admin:org:approve:$ORG_ID"
 BODY=$(jq -nc --arg scope "$SCOPE" '{scope:$scope}')
 AUTH=$(python scripts/nostr_dev.py auth --sec "$ADMIN_SEC" \
@@ -143,13 +150,18 @@ The authoritative request and response schemas are at `/docs` and `/openapi.json
 | POST | `/v1/auth/challenges` | NIP-98 | Issue a short-lived scoped challenge |
 | POST | `/v1/orgs` | NIP-98 root key | Apply as an organization |
 | GET | `/v1/orgs` | Public | List approved organizations |
+| GET | `/v1/orgs/me` | Root or active operational key | Recover the caller's pending or approved organization |
+| GET | `/v1/orgs/{org_id}/dashboard` | Root or `verification` key | Organization portal status and counts |
 | GET | `/v1/orgs/{org_id}/counsellors` | Public | Signed roster, authorization, revocation, and counselor states |
+| GET | `/v1/orgs/{org_id}/operational-keys` | Root or `verification` key | List operational-key state |
 | PUT | `/v1/orgs/{org_id}/operational-keys` | Root-signed body | Authorize an operational key |
 | PUT | `/v1/orgs/{org_id}/operational-keys/{pubkey}/revoke` | Root-signed body | Emergency key cancellation |
 | PUT | `/v1/orgs/{org_id}/roster` | Operational-key-signed body | Publish the counselor roster |
 | PUT | `/v1/orgs/{org_id}/counsellors/{pubkey}/profile` | Counselor-signed body | Publish a public counselor profile |
 | POST | `/v1/orgs/{org_id}/counselor-invites` | `verification` key + challenge | Create one-use counselor invitation |
+| GET | `/v1/orgs/{org_id}/counselor-invites` | `verification` key | List invite metadata without raw codes |
 | POST | `/v1/counselor-enrollments/claim` | Counselor NIP-98 | Claim invitation with signed profile |
+| GET | `/v1/counselor-enrollments` | Counselor NIP-98 | Recover the caller's applications |
 | GET | `/v1/counselor-enrollments/{id}` | Owning counselor NIP-98 | Read onboarding status |
 | PUT | `/v1/counselor-enrollments/{id}/profile` | Owning counselor NIP-98 | Replace draft signed profile |
 | PUT | `/v1/counselor-enrollments/{id}/credentials` | Counselor challenge scope | Submit NIP-44 v2 ciphertext |
@@ -228,14 +240,30 @@ revocation should be present in `roster_key_revocation`.
 The API exposes this workflow in Swagger at `http://localhost:8000/docs`. All writes use the same
 NIP-98 and one-use challenge mechanism described above. In order, a client should:
 
+For local development, create an invite in one command. `OP_SEC` must be an operational key with
+the `verification` scope. Keep `REVIEW_SEC` private: the partner organisation needs it to decrypt
+credential document keys, but the counselor receives only the returned invite code.
+
+```bash
+export REVIEW_SEC=$(openssl rand -hex 32)
+export REVIEW_PUB=$(python scripts/nostr_dev.py pubkey --sec "$REVIEW_SEC")
+python scripts/nostr_dev.py counselor-invite \
+  --sec "$OP_SEC" --api "$API" --org-id "$ORG_ID" \
+  --review-pubkey "$REVIEW_PUB"
+```
+
+The command requests a one-use challenge, signs both NIP-98 requests, and prints the invite JSON.
+The raw `code` is returned only once.
+
 1. Call `POST /v1/auth/challenges` with `counselor:invite:$ORG_ID`, then call
    `POST /v1/orgs/$ORG_ID/counselor-invites` using a `verification`-scoped operational key. The body
    supplies a dedicated credential-review encryption pubkey and an expiry of at most 168 hours.
    Save the returned code—the API shows it only once.
 2. Generate the counselor identity locally. Sign the public profile with that key and claim the
    code at `POST /v1/counselor-enrollments/claim` using NIP-98 from the same key.
-3. NIP-44-encrypt each PDF/JPEG/PNG to the invitation's `credential_recipient_pubkey`. Obtain scope
-   `counselor:credentials:$ENROLLMENT_ID` and submit the ciphertext envelopes to
+3. Encrypt each PDF/JPEG/PNG with a fresh AES-256-GCM key and NIP-44-wrap only that key to the
+   invitation's `credential_recipient_pubkey`. Obtain scope
+   `counselor:credentials:$ENROLLMENT_ID` and submit the hybrid ciphertext envelopes to
    `PUT /v1/counselor-enrollments/$ENROLLMENT_ID/credentials`.
 4. The review key reads `GET /v1/orgs/$ORG_ID/counselor-enrollments?status=under_review`. A
    `verification`-scoped signer then obtains `counselor:review:$ORG_ID` and calls one of:
@@ -251,9 +279,11 @@ minimal:
 {
   "documents": [{
     "v": 1,
-    "algorithm": "nip44-v2",
+    "algorithm": "aes-256-gcm+nip44-v2",
     "recipient_pubkey": "<64-char review pubkey>",
-    "ciphertext": "<canonical base64 NIP-44 v2 payload>",
+    "wrapped_key": "<canonical base64 NIP-44 v2 payload containing the AES key>",
+    "iv": "<base64 12-byte AES-GCM nonce>",
+    "ciphertext": "<base64 AES-GCM document ciphertext>",
     "media_type": "application/pdf"
   }]
 }
@@ -262,6 +292,22 @@ minimal:
 Do not add legal names, filenames, license numbers, or other plaintext metadata to this payload.
 
 ### NIP-05 during local organization approval
+
+The one-command local workflow selects the newest pending organization, creates a temporary
+NIP-05 fixture, provisions a gitignored development admin identity, rebuilds the required
+services, and sends the normal signed approval request:
+
+```bash
+.venv/bin/python scripts/local_approve_org.py
+# Or select one explicitly:
+.venv/bin/python scripts/local_approve_org.py --org-id <organization UUID>
+```
+
+The script never bypasses NIP-05, admin authentication, or scoped one-use challenges. It merely
+hosts the expected document inside the local Compose network. Do not run its `nip05-dev` service
+or use its generated admin identity in production.
+
+The manual equivalent follows.
 
 An organization must normally host `https://<domain>/.well-known/nostr.json?name=_`. For local
 development, create the same file and serve it without putting the root key on the API server:

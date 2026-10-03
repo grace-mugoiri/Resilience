@@ -6,3 +6,5 @@ __pycache__/
 .ruff_cache/
 .hypothesis/
 config/client-config.signed.json
+.dev-admin-secret
+.dev-nip05/

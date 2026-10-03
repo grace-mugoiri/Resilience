@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.auth.nip98 import NostrPubkey
 from app.auth.org import require_org_key, require_org_operation
 from app.auth.scoped import require_scoped_authorization
-from app.db.models import CounsellorEnrollment
+from app.db.models import CounsellorEnrollment, CounsellorInvite
 from app.db.session import get_db
 from app.directory.service import get_org
 from app.enrollment.schemas import (
@@ -19,6 +19,7 @@ from app.enrollment.schemas import (
     EnrollmentOut,
     InviteCreate,
     InviteCreated,
+    InviteOut,
     ProfileUpdate,
     ReviewDecision,
 )
@@ -74,6 +75,30 @@ def post_invite(
     )
 
 
+@router.get("/v1/orgs/{org_id}/counselor-invites")
+def list_invites(
+    org_id: uuid.UUID,
+    _reviewer: VerificationReader,
+    db: Db,
+) -> list[InviteOut]:
+    invitations = db.scalars(
+        select(CounsellorInvite)
+        .where(CounsellorInvite.org_id == org_id)
+        .order_by(CounsellorInvite.created_at.desc())
+    ).all()
+    return [
+        InviteOut(
+            id=invite.id,
+            organization_id=invite.org_id,
+            credential_recipient_pubkey=invite.credential_recipient_pubkey,
+            expires_at=invite.expires_at,
+            used_at=invite.used_at,
+            created_at=invite.created_at,
+        )
+        for invite in invitations
+    ]
+
+
 @router.post(
     "/v1/counselor-enrollments/claim",
     status_code=status.HTTP_201_CREATED,
@@ -86,6 +111,17 @@ def post_claim(
 ) -> EnrollmentOut:
     enrollment = claim_invite(db, body.invite_code, counsellor, body.profile_event, settings)
     return enrollment_out(db, enrollment)
+
+
+@router.get("/v1/counselor-enrollments")
+def list_my_enrollments(counsellor: NostrPubkey, db: Db) -> list[EnrollmentOut]:
+    """Recover this identity's applications after a reload or device restore."""
+    enrollments = db.scalars(
+        select(CounsellorEnrollment)
+        .where(CounsellorEnrollment.counsellor_pubkey == counsellor)
+        .order_by(CounsellorEnrollment.created_at.desc())
+    ).all()
+    return [enrollment_out(db, enrollment) for enrollment in enrollments]
 
 
 @router.get("/v1/counselor-enrollments/{enrollment_id}")
