@@ -1,0 +1,52 @@
+# Render Blueprint for the Resilience API and its database.
+# In Render: New -> Blueprint, pick this repo and the Dev branch. Render asks for every value
+# marked `sync: false` the first time. See backend/README.md, "Deploy on Render".
+#
+# Not included: the relays and relay-policy (they need private networking and always-on
+# websockets, which the free plan lacks) and the worker (background workers are paid only).
+
+services:
+  - type: web
+    name: resilience-api
+    runtime: docker
+    plan: free
+    region: frankfurt # the closest Render region to Nairobi
+    branch: Dev
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8000" # the Dockerfile listens on 8000
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: resilience-db
+          property: connectionString
+      - key: RELAY_POLICY_HMAC_KEY
+        generateValue: true
+      - key: COUNSELOR_INVITE_HMAC_KEY
+        generateValue: true
+      - key: LIGHTNING_NETWORK
+        value: tbs # signet; change to bc only for a real-money demo
+      - key: SIGNED_CONFIG_PATH
+        value: /etc/secrets/client-config.signed.json # add as a Secret File in the dashboard
+      - key: PUBLIC_API_BASE
+        sync: false # https://<service name>.onrender.com, no trailing slash
+      - key: CORS_ORIGINS
+        sync: false # the frontend's exact URL, comma separated if more than one
+      - key: ADMIN_PUBKEYS
+        sync: false # hex public keys, comma separated
+      - key: PLATFORM_PUBKEY
+        sync: false # printed by scripts/sign_config.py
+
+databases:
+  - name: resilience-db
+    plan: free # deleted by Render after 30 days
+    region: frankfurt
+    databaseName: resilience
+    user: resilience
+    ipAllowList: [] # only services in this Render workspace can connect
