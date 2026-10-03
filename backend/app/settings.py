@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     ]
     platform_pubkey: str | None = None
     signed_config_path: str = "config/client-config.signed.json"
+    # Comma-separated public websocket URLs embedded in the signed client config. Keeping these
+    # in the deployment environment makes local/staging/production swaps explicit.
+    client_relay_urls: Annotated[list[str], NoDecode] = [
+        "ws://localhost:7777",
+        "ws://localhost:7778",
+    ]
+    approved_orgs_list: str | None = None
     nip98_window_seconds: int = 60
     sensitive_challenge_seconds: int = 120
     relay_policy_hmac_key: str = "dev-only-change-me"
@@ -54,6 +61,15 @@ class Settings(BaseSettings):
                 raise ValueError("ADMIN_PUBKEYS must be 64-character hex pubkeys (not npub)")
         return v
 
+    @field_validator("client_relay_urls", mode="before")
+    @classmethod
+    def split_relays(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = [url.strip() for url in v.split(",") if url.strip()]
+        if not isinstance(v, list) or len(set(v)) < 2:
+            raise ValueError("CLIENT_RELAY_URLS must contain at least two distinct relay URLs")
+        return v
+
     @field_validator("public_api_base")
     @classmethod
     def strip_slash(cls, v: str) -> str:
@@ -75,7 +91,7 @@ class Settings(BaseSettings):
             raise ValueError("DISBURSEMENT_APPROVAL_THRESHOLD must be at least 2")
         return v
 
-    @field_validator("platform_pubkey", "nip05_dev_base_url", mode="before")
+    @field_validator("platform_pubkey", "nip05_dev_base_url", "approved_orgs_list", mode="before")
     @classmethod
     def empty_is_none(cls, v: object) -> object:
         return v or None

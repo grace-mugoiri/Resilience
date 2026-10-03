@@ -41,15 +41,35 @@ KEY=$(python scripts/sign_config.py --dev | grep '^PLATFORM_PUBKEY=')
 sed -i "s/^PLATFORM_PUBKEY=.*/$KEY/" .env
 ```
 
-The Compose file publishes PostgreSQL on host port `5433` so it can coexist with a PostgreSQL
-installation on `5432`. Set the URL used by local commands:
+The example already uses PostgreSQL host port `5433` so it can coexist with a PostgreSQL
+installation on `5432`. `DATABASE_URL` is for commands run on the host; `DOCKER_DATABASE_URL`
+uses the Compose service name `db` and its internal port `5432`.
+
+### Switching environments
+
+Keep one untracked environment file per deployment, for example `.env`, `.env.staging`, and
+`.env.production`. Start Compose with the one you want:
 
 ```bash
-sed -i 's#@localhost:[0-9]*/resilience$#@localhost:5433/resilience#' .env
+docker compose --env-file .env up --build
+docker compose --env-file .env.staging up --build
 ```
 
-The API and worker containers use the Compose service name `db` and the internal database port
-`5432`; Compose configures this for them.
+Each file must set `BACKEND_ENV_FILE` to its own filename (for example,
+`BACKEND_ENV_FILE=.env.staging`). This makes Compose pass that same file into the API, worker,
+and relay-policy containers instead of always loading `.env`.
+
+`CLIENT_RELAY_URLS` is the source for the relay URLs embedded by `scripts/sign_config.py`.
+After changing the relay URLs or platform key, sign the client configuration with the matching
+file and restart the API:
+
+```bash
+python scripts/sign_config.py --env-file .env.staging
+```
+
+The frontend receives the new relay list from signed `GET /v1/config`; it does not need relay URLs
+of its own. `.env.production.example` documents the deployed values without containing real
+secrets.
 
 ## Run the full stack
 
