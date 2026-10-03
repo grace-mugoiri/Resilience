@@ -42,6 +42,7 @@ def test_disbursement_needs_distinct_creator_and_payment_approval(client):
         "amount_kes": 2500,
         "rate_source": "test-rate",
         "reason_code": "transport",
+        "note": "Needs fare to reach a shelter tonight",
     }
     created = sensitive_post(
         client,
@@ -54,6 +55,7 @@ def test_disbursement_needs_distinct_creator_and_payment_approval(client):
     assert created.status_code == 201
     assert created.json()["approval_count"] == 1
     assert created.json()["ready"] is False
+    assert created.json()["note"] == "Needs fare to reach a shelter tonight"
     disbursement_id = created.json()["id"]
 
     approval_path = f"/v1/disbursements/{disbursement_id}/approve"
@@ -67,6 +69,19 @@ def test_disbursement_needs_distinct_creator_and_payment_approval(client):
     assert approved.status_code == 200
     assert approved.json()["approval_count"] == 2
     assert approved.json()["ready"] is True
+
+    counsellor_list = client.get(
+        path,
+        headers=auth_header(BASE + path, secret=COUNSELLOR_SECRET),
+    )
+    assert counsellor_list.status_code == 200
+    assert [item["id"] for item in counsellor_list.json()] == [disbursement_id]
+    payment_list = client.get(
+        f"{path}?state=CREATED",
+        headers=auth_header(BASE + f"{path}?state=CREATED", secret=OPERATIONAL_SECRET),
+    )
+    assert payment_list.status_code == 200
+    assert [item["id"] for item in payment_list.json()] == [disbursement_id]
 
 
 def test_disbursement_idempotency_rejects_changed_body(client):

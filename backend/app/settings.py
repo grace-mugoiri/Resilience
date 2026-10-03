@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     nip98_window_seconds: int = 60
     sensitive_challenge_seconds: int = 120
     relay_policy_hmac_key: str = "dev-only-change-me"
+    # Recoverable member routing keys are encrypted separately from relay-policy HMACs.
+    membership_box_key: str = "dev-only-membership-box-key-change-me"
     counselor_invite_hmac_key: str = "dev-only-invite-key-change-me"
     relay_policy_port: int = 50051
     guest_event_max_seconds: int = 300
@@ -75,7 +77,7 @@ class Settings(BaseSettings):
     def strip_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
-    @field_validator("relay_policy_hmac_key", "counselor_invite_hmac_key")
+    @field_validator("relay_policy_hmac_key", "membership_box_key", "counselor_invite_hmac_key")
     @classmethod
     def strong_policy_key(cls, v: str, info) -> str:
         # Tests and local development deliberately use a documented throwaway value.

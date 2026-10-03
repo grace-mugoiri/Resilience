@@ -211,7 +211,21 @@ The authoritative request and response schemas are at `/docs` and `/openapi.json
 | POST | `/v1/orgs/{org_id}/support-groups` | `groups` key + challenge | Create an opaque support group |
 | PUT | `/v1/orgs/{org_id}/support-groups/{group_id}/members/{pubkey}` | `groups` key + challenge | Add/update a blinded membership |
 | DELETE | `/v1/orgs/{org_id}/support-groups/{group_id}/members/{pubkey}` | `groups` key + challenge | Remove a membership |
+| GET | `/v1/support-groups` | Public | Discover groups without exposing membership |
+| POST | `/v1/support-groups/{group_id}/join` | NIP-98 | Join or request access |
+| GET | `/v1/support-groups/{group_id}/membership` | NIP-98 | Read the caller's own membership state |
+| GET | `/v1/support-groups/{group_id}/recipients` | Active member NIP-98 | Get private NIP-17 fan-out keys and rotating room ID |
+| PUT | `/v1/support-groups/{group_id}/routing-key` | Active member NIP-98 | Reissue an encrypted legacy routing key |
+| POST | `/v1/circle/invites` | NIP-98 | Create a one-use private-circle invite |
+| POST | `/v1/circle/invites/claim` | NIP-98 | Claim a circle invite |
+| GET | `/v1/circle` | NIP-98 | Read caller-only circle state |
+| GET | `/v1/circle/recipients` | Active member NIP-98 | Get private NIP-17 fan-out keys and rotating room ID |
+| PUT | `/v1/circle/routing-key` | Active member NIP-98 | Reissue an encrypted legacy routing key |
+| DELETE | `/v1/circle/{circle_id}/members/{pubkey}` | Circle owner/member NIP-98 | Silently remove self or, for the owner, another member |
+| PUT/DELETE | `/v1/blocks/{pubkey}` | NIP-98 | Add/remove a blinded relay deny rule |
+| POST | `/v1/reports` | NIP-98 | Submit a report with optional explicit excerpts |
 | POST | `/v1/orgs/{org_id}/disbursements` | Counselor + challenge + idempotency key | Create and sign approval one |
+| GET | `/v1/orgs/{org_id}/disbursements` | Counselor or `payments` key | List own/all support requests, optionally filtered by state |
 | POST | `/v1/disbursements/{id}/approve` | `payments` key + challenge | Independent second approval |
 | GET | `/v1/disbursements/{id}` | NIP-98 authorized party | Read the record and approval state |
 

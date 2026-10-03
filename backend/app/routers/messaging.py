@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
@@ -28,6 +28,12 @@ from app.db.models import (
     SafetyReport,
 )
 from app.db.session import get_db
+from app.privacy.member_box import (
+    membership_context,
+    opaque_room_id,
+    open_member_pubkey,
+    seal_member_pubkey,
+)
 from app.relay.membership import blind_pubkey
 from app.settings import Settings, get_settings
 
@@ -75,6 +81,14 @@ class CircleStatusOut(BaseModel):
     circle_id: uuid.UUID | None
     member_count: int
     owner: bool
+    membership_revision: int | None = None
+
+
+class CircleRecipientsOut(BaseModel):
+    circle_id: uuid.UUID
+    room_id: str
+    membership_revision: int
+    recipients: list[str]
 
 
 @router.post("/circle/invites", status_code=status.HTTP_201_CREATED)
@@ -85,7 +99,17 @@ def create_circle_invite(caller: NostrPubkey, db: Db, settings: SettingsDep) -> 
         circle = PrivateCircle(owner_hash=caller_hash)
         db.add(circle)
         db.flush()
-        db.add(PrivateCircleMember(circle_id=circle.id, member_hash=caller_hash))
+        db.add(
+            PrivateCircleMember(
+                circle_id=circle.id,
+                member_hash=caller_hash,
+                member_box=seal_member_pubkey(
+                    settings,
+                    caller,
+                    membership_context("circle", circle.id, caller_hash),
+                ),
+            )
+        )
     if circle.owner_hash != caller_hash:
         raise HTTPException(403, "only the circle owner can invite members")
     members = db.scalar(
@@ -141,7 +165,20 @@ def claim_circle_invite(
     )
     if int(count or 0) >= 3:
         raise HTTPException(409, "the circle is full")
-    db.add(PrivateCircleMember(circle_id=invite.circle_id, member_hash=caller_hash))
+    db.add(
+        PrivateCircleMember(
+            circle_id=invite.circle_id,
+            member_hash=caller_hash,
+            member_box=seal_member_pubkey(
+                settings,
+                caller,
+                membership_context("circle", invite.circle_id, caller_hash),
+            ),
+        )
+    )
+    circle = db.get(PrivateCircle, invite.circle_id)
+    assert circle is not None
+    circle.membership_revision += 1
     inviter = invite.inviter_pubkey
     invite.used_at = now
     invite.inviter_pubkey = None
@@ -164,7 +201,81 @@ def circle_status(caller: NostrPubkey, db: Db, settings: SettingsDep) -> CircleS
         )
     )
     return CircleStatusOut(
-        circle_id=circle.id, member_count=int(count or 0), owner=circle.owner_hash == caller_hash
+        circle_id=circle.id,
+        member_count=int(count or 0),
+        owner=circle.owner_hash == caller_hash,
+        membership_revision=circle.membership_revision,
+    )
+
+
+@router.put("/circle/routing-key", response_model=CircleStatusOut)
+def refresh_circle_routing_key(
+    caller: NostrPubkey, db: Db, settings: SettingsDep
+) -> CircleStatusOut:
+    """Reissue the caller's encrypted routing key after a server-key migration."""
+    caller_hash = blind_pubkey(settings.relay_policy_hmac_key, caller)
+    circle = _circle_for(db, caller_hash)
+    if circle is None:
+        raise HTTPException(404, "circle not found")
+    member = db.get(PrivateCircleMember, (circle.id, caller_hash))
+    assert member is not None
+    member.member_box = seal_member_pubkey(
+        settings,
+        caller,
+        membership_context("circle", circle.id, caller_hash),
+    )
+    count = db.scalar(
+        select(func.count())
+        .select_from(PrivateCircleMember)
+        .where(
+            PrivateCircleMember.circle_id == circle.id,
+            PrivateCircleMember.active.is_(True),
+        )
+    )
+    db.commit()
+    return CircleStatusOut(
+        circle_id=circle.id,
+        member_count=int(count or 0),
+        owner=circle.owner_hash == caller_hash,
+        membership_revision=circle.membership_revision,
+    )
+
+
+@router.get("/circle/recipients")
+def circle_recipients(
+    caller: NostrPubkey,
+    db: Db,
+    settings: SettingsDep,
+    response: Response,
+) -> CircleRecipientsOut:
+    caller_hash = blind_pubkey(settings.relay_policy_hmac_key, caller)
+    circle = _circle_for(db, caller_hash)
+    if circle is None:
+        raise HTTPException(404, "circle not found")
+    members = db.scalars(
+        select(PrivateCircleMember).where(
+            PrivateCircleMember.circle_id == circle.id,
+            PrivateCircleMember.active.is_(True),
+        )
+    ).all()
+    try:
+        recipients = [
+            open_member_pubkey(
+                settings,
+                member.member_box or "",
+                membership_context("circle", circle.id, member.member_hash),
+            )
+            for member in members
+            if member.member_hash != caller_hash
+        ]
+    except ValueError as exc:
+        raise HTTPException(409, "circle routing keys must be reissued") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return CircleRecipientsOut(
+        circle_id=circle.id,
+        room_id=opaque_room_id(settings, "circle", circle.id, circle.membership_revision),
+        membership_revision=circle.membership_revision,
+        recipients=recipients,
     )
 
 
@@ -187,6 +298,7 @@ def remove_circle_member(
     if member is None or not member.active:
         raise HTTPException(404, "circle member not found")
     member.active = False
+    circle.membership_revision += 1
     db.commit()
     count = db.scalar(
         select(func.count())
@@ -197,7 +309,10 @@ def remove_circle_member(
         )
     )
     return CircleStatusOut(
-        circle_id=circle.id, member_count=int(count or 0), owner=circle.owner_hash == caller_hash
+        circle_id=circle.id,
+        member_count=int(count or 0),
+        owner=circle.owner_hash == caller_hash,
+        membership_revision=circle.membership_revision,
     )
 
 

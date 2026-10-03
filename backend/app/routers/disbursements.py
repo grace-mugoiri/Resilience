@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +41,7 @@ class DisbursementIn(BaseModel):
     amount_kes: int = Field(gt=0)
     rate_source: str = Field(min_length=1, max_length=120)
     reason_code: Literal["transport", "pharmacy", "shelter", "food", "other"]
+    note: str | None = Field(default=None, max_length=500)
 
 
 class DisbursementOut(BaseModel):
@@ -50,6 +51,8 @@ class DisbursementOut(BaseModel):
     amount_kes: int
     rate_source: str
     reason_code: str
+    note: str | None
+    created_by_pubkey: str
     state: str
     approval_count: int
     approvals_required: int
@@ -92,6 +95,8 @@ def _out(db: Session, row: Disbursement, settings: Settings) -> DisbursementOut:
         amount_kes=row.amount_kes,
         rate_source=row.rate_source,
         reason_code=row.reason_code,
+        note=row.note,
+        created_by_pubkey=row.created_by_pubkey,
         state=row.state,
         approval_count=approval_count,
         approvals_required=settings.disbursement_approval_threshold,
@@ -152,6 +157,7 @@ def create_disbursement(
         amount_kes=body.amount_kes,
         rate_source=body.rate_source,
         reason_code=body.reason_code,
+        note=body.note.strip() if body.note and body.note.strip() else None,
         created_by_pubkey=actor,
     )
     db.add(row)
@@ -177,6 +183,40 @@ def create_disbursement(
         db.rollback()
         raise HTTPException(409, "disbursement was created concurrently; retry safely") from exc
     return _out(db, row, settings)
+
+
+@router.get("/v1/orgs/{org_id}/disbursements", response_model=list[DisbursementOut])
+def list_disbursements(
+    org_id: uuid.UUID,
+    actor: NostrPubkey,
+    db: Db,
+    settings: SettingsDep,
+    state: Annotated[
+        Literal[
+            "CREATED",
+            "INVOICE_ATTACHED",
+            "PAYING",
+            "PAID",
+            "EXPIRED",
+            "FAILED",
+            "CANCELLED",
+        ]
+        | None,
+        Query(),
+    ] = None,
+) -> list[DisbursementOut]:
+    """List support requests without ever storing or returning a survivor identity."""
+    query = select(Disbursement).where(Disbursement.org_id == org_id)
+    if _payment_key(db, org_id, actor):
+        pass
+    elif _active_counsellor(db, org_id, actor):
+        query = query.where(Disbursement.created_by_pubkey == actor)
+    else:
+        raise HTTPException(403, "active counsellor or organization payments key required")
+    if state is not None:
+        query = query.where(Disbursement.state == state)
+    rows = db.scalars(query.order_by(Disbursement.created_at.desc())).all()
+    return [_out(db, row, settings) for row in rows]
 
 
 @router.post("/v1/disbursements/{disbursement_id}/approve", response_model=DisbursementOut)

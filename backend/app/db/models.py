@@ -205,6 +205,7 @@ class Disbursement(Base):
     amount_kes: Mapped[int] = mapped_column(Integer)
     rate_source: Mapped[str] = mapped_column(Text)
     reason_code: Mapped[str] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str] = mapped_column(Text, default="CREATED", server_default="CREATED")
     payment_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     invoice: Mapped[str | None] = mapped_column(Text)  # deleted once the payment is final
@@ -261,6 +262,7 @@ class SupportGroup(Base):
     access: Mapped[str] = mapped_column(Text, default="request", server_default="request")
     leader_name: Mapped[str | None] = mapped_column(String(80))
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    membership_revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -310,6 +312,7 @@ class PrivateCircle(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_hash: Mapped[str] = mapped_column(String(64), unique=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    membership_revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -320,6 +323,7 @@ class PrivateCircleMember(Base):
         ForeignKey("private_circles.id", ondelete="CASCADE"), primary_key=True
     )
     member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    member_box: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
