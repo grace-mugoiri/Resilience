@@ -3,6 +3,7 @@ import type {
   CounselorEnrollment,
   CounselorInviteRecord,
   OrganizationDashboard,
+  OrganizationFocusArea,
 } from '../api/types'
 import { ApiError } from '../api/client'
 import {
@@ -17,6 +18,7 @@ import { organizationVault, type OrganizationVaultSummary as VaultSummary } from
 import './organization.css'
 
 const go = (path: string) => window.location.assign(path)
+const organizationFocusAreas: OrganizationFocusArea[] = ['Legal aid', 'Safe shelter', 'Medical care', 'Counselling', 'Emergency support', 'Economic empowerment', 'Child and family support', 'Advocacy and education']
 
 function Exit() {
   return <button className="org-exit" onClick={() => { organizationVault.lock(); window.location.replace('/') }}>↪ Exit</button>
@@ -66,13 +68,15 @@ function Welcome() {
 function Register() {
   const [name, setName] = useState('')
   const [domain, setDomain] = useState('')
+  const [focusAreas, setFocusAreas] = useState<OrganizationFocusArea[]>([])
   const [pin, setPin] = useState('')
   const [confirm, setConfirm] = useState('')
   const [consent, setConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const validDomain = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain.trim().replace(/^https?:\/\//, '').replace(/\/$/, ''))
-  const ready = name.trim().length >= 2 && validDomain && /^\d{4}$/.test(pin) && pin === confirm && consent
+  const ready = name.trim().length >= 2 && validDomain && focusAreas.length > 0 && /^\d{4}$/.test(pin) && pin === confirm && consent
+  const toggleFocusArea = (area: OrganizationFocusArea) => setFocusAreas((current) => current.includes(area) ? current.filter((value) => value !== area) : current.length < 5 ? [...current, area] : current)
   const submit = async () => {
     setBusy(true); setError('')
     let created = false
@@ -86,7 +90,7 @@ function Register() {
         try { organization = (await rootApi.myOrganization()).organization }
         catch (caught) {
           if (!(caught instanceof ApiError) || caught.status !== 404) throw caught
-          organization = await rootApi.applyOrganization({ name: summary.name, domain: summary.domain, directory_visibility: 'public' })
+          organization = await rootApi.applyOrganization({ name: summary.name, domain: summary.domain, focus_areas: focusAreas, directory_visibility: 'public' })
         }
         await organizationVault.setOrganization(organization)
       }
@@ -100,7 +104,7 @@ function Register() {
       setBusy(false)
     }
   }
-  return <Screen title="Register organization" back className="org-form"><h2>Create your organization identity</h2><p>The root key is generated here. Resilience receives only signed requests and public keys.</p><label>Organization name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} placeholder="e.g. Wangu Support Network" /></label><label>Public website domain<input value={domain} onChange={(event) => setDomain(event.target.value)} autoCapitalize="none" placeholder="example.org" /><small>You will publish one NIP-05 file on this domain.</small></label><label>Create a 4-digit portal PIN<input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 4))} type="password" inputMode="numeric" autoComplete="new-password" /></label><label>Confirm PIN<input value={confirm} onChange={(event) => setConfirm(event.target.value.replace(/\D/g, '').slice(0, 4))} type="password" inputMode="numeric" autoComplete="new-password" /></label><label className="org-check"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand that approved organizations and their verified counselor roster are public.</span></label><aside>▣ <span>The root key is used only to authorize operational keys. After backup confirmation, it is removed from this online vault.</span></aside><ErrorText>{error}</ErrorText><button className="org-primary" disabled={!ready || busy} onClick={() => void submit()}>{busy ? 'Creating secure identity…' : 'Create and apply'}</button></Screen>
+  return <Screen title="Register organization" back className="org-form"><h2>Create your organization identity</h2><p>The root key is generated here. Resilience receives only signed requests and public keys.</p><label>Organization name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} placeholder="e.g. Wangu Support Network" /></label><label>Public website domain<input value={domain} onChange={(event) => setDomain(event.target.value)} autoCapitalize="none" placeholder="example.org" /><small>You will publish one NIP-05 file on this domain.</small></label><fieldset className="org-focus"><legend>Focus areas <small>Choose up to 5</small></legend><div>{organizationFocusAreas.map((area)=><button type="button" className={focusAreas.includes(area)?'selected':''} aria-pressed={focusAreas.includes(area)} onClick={()=>toggleFocusArea(area)} key={area}>{area}</button>)}</div></fieldset><label>Create a 4-digit portal PIN<input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 4))} type="password" inputMode="numeric" autoComplete="new-password" /></label><label>Confirm PIN<input value={confirm} onChange={(event) => setConfirm(event.target.value.replace(/\D/g, '').slice(0, 4))} type="password" inputMode="numeric" autoComplete="new-password" /></label><label className="org-check"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I understand that approved organizations and their verified counselor roster are public.</span></label><aside>▣ <span>The root key is used only to authorize operational keys. After backup confirmation, it is removed from this online vault.</span></aside><ErrorText>{error}</ErrorText><button className="org-primary" disabled={!ready || busy} onClick={() => void submit()}>{busy ? 'Creating secure identity…' : 'Create and apply'}</button></Screen>
 }
 
 function downloadText(filename: string, text: string) {

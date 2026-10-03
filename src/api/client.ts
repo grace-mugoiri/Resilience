@@ -6,6 +6,7 @@ import type {
   AuthorizationChallenge,
   CircleClaim,
   CircleInvite,
+  CircleRecipients,
   CircleStatus,
   Counselor,
   CounselorDirectory,
@@ -22,6 +23,7 @@ import type {
   Membership,
   MembershipInput,
   GroupJoin,
+  RoomRecipients,
   OperationalKey,
   Organization,
   OrganizationAccess,
@@ -29,6 +31,7 @@ import type {
   OrganizationDashboard,
   OrganizationStatus,
   SupportGroup,
+  SupportGroupInput,
   SafetyReport,
   WhoAmI,
 } from './types'
@@ -42,6 +45,7 @@ type RequestOptions = {
   auth?: Auth
   headers?: Record<string, string>
   signal?: AbortSignal
+  timeoutMs?: number
 }
 
 export class ApiError extends Error {
@@ -102,15 +106,33 @@ export class ResilienceApi {
       headers.Authorization = await signer.authorization({ url, method, body, scope, challenge })
     }
 
-    const response = await this.fetcher(url, {
-      method,
-      body,
-      headers,
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-      cache: options.auth && options.auth !== 'none' ? 'no-store' : 'default',
-      signal: options.signal,
-    })
+    const controller = new AbortController()
+    let timedOut = false
+    const abort = () => controller.abort()
+    if (options.signal?.aborted) controller.abort()
+    else options.signal?.addEventListener('abort', abort, { once: true })
+    const timeout = globalThis.setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, options.timeoutMs ?? 15_000)
+    let response: Response
+    try {
+      response = await this.fetcher(url, {
+        method,
+        body,
+        headers,
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        cache: options.auth && options.auth !== 'none' ? 'no-store' : 'default',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (timedOut) throw new Error('The server took too long to respond. Check your connection and try again.', { cause: error })
+      throw error
+    } finally {
+      globalThis.clearTimeout(timeout)
+      options.signal?.removeEventListener('abort', abort)
+    }
     const text = await response.text()
     let payload: unknown = null
     if (text) {
@@ -177,6 +199,18 @@ export class ResilienceApi {
     })
   }
 
+  supportGroupRecipients(groupId: string) {
+    return this.request<RoomRecipients>(`/v1/support-groups/${enc(groupId)}/recipients`, {
+      auth: 'basic',
+    })
+  }
+
+  refreshSupportGroupRoutingKey(groupId: string) {
+    return this.request<Membership>(`/v1/support-groups/${enc(groupId)}/routing-key`, {
+      method: 'PUT', body: {}, auth: 'basic',
+    })
+  }
+
   createCircleInvite() {
     return this.request<CircleInvite>('/v1/circle/invites', {
       method: 'POST', body: {}, auth: 'basic',
@@ -191,6 +225,16 @@ export class ResilienceApi {
 
   circleStatus() {
     return this.request<CircleStatus>('/v1/circle', { auth: 'basic' })
+  }
+
+  circleRecipients() {
+    return this.request<CircleRecipients>('/v1/circle/recipients', { auth: 'basic' })
+  }
+
+  refreshCircleRoutingKey() {
+    return this.request<CircleStatus>('/v1/circle/routing-key', {
+      method: 'PUT', body: {}, auth: 'basic',
+    })
   }
 
   removeCircleMember(circleId: string, peerPubkey: string) {
@@ -366,9 +410,10 @@ export class ResilienceApi {
     )
   }
 
-  createSupportGroup(orgId: string) {
+  createSupportGroup(orgId: string, input: SupportGroupInput = {}) {
     return this.request<SupportGroup>(`/v1/orgs/${enc(orgId)}/support-groups`, {
       method: 'POST',
+      body: input,
       auth: { scope: `group:create:${orgId}` },
     })
   }
@@ -418,6 +463,13 @@ export class ResilienceApi {
 
   getDisbursement(disbursementId: string) {
     return this.request<Disbursement>(`/v1/disbursements/${enc(disbursementId)}`, {
+      auth: 'basic',
+    })
+  }
+
+  listDisbursements(orgId: string, state?: Disbursement['state']) {
+    const query = state ? `?state=${enc(state)}` : ''
+    return this.request<Disbursement[]>(`/v1/orgs/${enc(orgId)}/disbursements${query}`, {
       auth: 'basic',
     })
   }

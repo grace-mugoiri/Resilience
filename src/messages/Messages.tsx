@@ -26,25 +26,11 @@ function Exit() { return <button className="messages-exit" onClick={() => window
 function Nav() { return <nav className="messages-nav"><a href={withMode('/app')}><Icon name="home" /><span>Home</span></a><a className="active" href={withMode('/app/messages')}><Icon name="chat" /><span>Messages</span></a>{guest() ? <a href={withMode('/app')}><Icon name="wallet" /><span>Wallet</span></a> : <a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a>}<a href={withMode('/app/settings')}><Icon name="settings" /><span>Settings</span></a></nav> }
 
 type Conversation = { name: string; preview: string; time: string; type: Exclude<Filter, 'All'> | 'Counselor'; unread?: boolean; verified?: boolean; route: string }
-const conversations: Conversation[] = [
-  { name: 'River', preview: 'Did you manage to reach the organization?', time: '1h', type: 'Groups', unread: true, route: '/app/groups/healing/chat' },
-  { name: 'Healing after abuse', preview: 'Grace: Please remember not to share the exact…', time: '3h', type: 'Groups', route: '/app/groups/healing/chat' },
-  { name: 'Healing after abuse', preview: 'Your request was accepted', time: 'Just now', type: 'Groups', route: '/app/groups/healing/chat' },
-  { name: 'Amani', preview: 'Thanks for the advice yesterday!', time: 'Yesterday', type: 'Circle', route: '/app/circle/amani' },
-  { name: 'Sunrise', preview: 'Thank you for the kind words yesterday.', time: 'Yesterday', type: 'Circle', route: '/app/circle/sunrise' },
-]
-
-const requestData = [
-  { name: 'Jamie', group: 'Healing after abuse', text: 'Hi there, I saw your post and wanted to share my experience if you’re open to chatting.' },
-  { name: 'Taylor', group: 'Healing after abuse', text: 'Hello! I can help guide you to some great resources in the CBD area.' },
-]
-
 function Inbox() {
   const [filter, setFilter] = useState<Filter>('All')
-  const unresolvedCount = requestData.filter((request) => !sessionStorage.getItem(`message-request-${request.name}`)).length
-  const accepted = requestData.filter((request) => sessionStorage.getItem(`message-request-${request.name}`) === 'accepted').map<Conversation>((request) => ({ name: request.name, preview: request.text, time: 'Just now', type: 'Groups', unread: true, route: '/app/messages' }))
-  // Real conversations with counselors. A guest's key only lives on the chat screen, so a guest has none here.
   const chat = useMessenger('survivor', guest())
+  const requests = chat.events.filter((event) => event.type === 'message.request' && !sessionStorage.getItem(`message-request-${event.id}`))
+  const unresolvedCount = requests.length
   const counselorChats = chat.state.kind === 'ready' && !guest()
     ? conversationsOf(chat.messages).filter((item) => item.orgId).map<Conversation>((item) => ({
       name: item.peerName,
@@ -55,15 +41,47 @@ function Inbox() {
       route: chatPath(item.orgId!, item.peer),
     }))
     : []
-  const available = guest() ? [] : [...counselorChats, ...accepted, ...conversations]
+  const circleChats = chat.state.kind === 'ready' && !guest()
+    ? conversationsOf(chat.messages).filter((item) => !item.orgId).map<Conversation>((item) => ({
+      name: item.peerName,
+      preview: `${item.last.fromMe ? 'You: ' : ''}${item.last.text}`,
+      time: timeLabel(item.last.createdAt),
+      type: 'Circle',
+      unread: !item.last.fromMe,
+      route: `/app/circle/chat/${item.peer}`,
+    })) : []
+  const groupLatest = new Map<string, (typeof chat.events)[number]>()
+  for (const event of chat.events.filter((item) => item.type === 'group.message')) {
+    const current = groupLatest.get(event.conversationId)
+    if (!current || current.createdAt < event.createdAt) groupLatest.set(event.conversationId, event)
+  }
+  const groupChats = [...groupLatest.values()].map<Conversation>((event) => ({
+    name: typeof event.body.group_name === 'string' ? event.body.group_name : 'Support group',
+    preview: `${event.fromMe ? 'You: ' : ''}${String(event.body.text || '')}`,
+    time: timeLabel(event.createdAt),
+    type: 'Groups',
+    unread: !event.fromMe,
+    route: typeof event.body.group_id === 'string' ? `/app/groups/${event.body.group_id}/chat` : '/app/groups',
+  }))
+  const available = guest() ? [] : [...counselorChats, ...circleChats, ...groupChats]
   const shown = filter === 'All' ? available : available.filter((item) => item.type === filter)
   return <div className="messages-screen"><header className="messages-header"><h1>Messages</h1><Exit /></header>{!guest() && <div className="message-filters">{(['All', 'Circle', 'Groups'] as Filter[]).map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item}</button>)}<button className="requests-tab" onClick={() => go('/app/messages/requests')}>Requests{unresolvedCount > 0 && <span>{unresolvedCount}</span>}</button></div>}<p className="preview-privacy"><Icon name="hidden" size={18} />Message previews are hidden on your lock screen.</p>{chat.state.kind === 'locked' && <PinUnlock title={`Welcome back, ${chat.state.nickname}`} text="Enter your PIN to see your conversations with counselors." unlock={chat.unlock} />}{chat.state.kind === 'error' && <p className="chat-empty">{chat.state.message}</p>}{guest() && <p className="chat-empty">Without an account, a conversation only lasts while it’s open. Create an account to keep your conversations.</p>}<main className="inbox-list">{shown.map((conversation, index) => <button onClick={() => go(conversation.route)} key={`${conversation.name}-${index}`}><span className="inbox-avatar">{conversation.name.charAt(0)}</span><span className="inbox-copy"><strong>{conversation.name}{conversation.verified && <span className="verified-mark">✓</span>}</strong><span>{conversation.preview}</span></span><span className="inbox-meta">{conversation.time}{conversation.unread && <i />}</span></button>)}</main><Nav /></div>
 }
 
 function Requests() {
-  const [requests, setRequests] = useState(() => requestData.filter((request) => !sessionStorage.getItem(`message-request-${request.name}`)))
-  const resolve = (name: string, result: 'accepted' | 'ignored') => { sessionStorage.setItem(`message-request-${name}`, result); setRequests((current) => current.filter((request) => request.name !== name)) }
-  return <div className="messages-screen request-screen"><header className="messages-header"><button className="messages-back" onClick={() => go('/app/messages')} aria-label="Go back"><Icon name="back" size={18} /></button><h1>Message requests</h1><Exit /></header><main className="request-list">{requests.map((request) => <article key={request.name}><h2>{request.name}</h2><span>From: {request.group}</span><p>“{request.text}”</p><div><button onClick={() => resolve(request.name, 'ignored')}>Ignore</button><button onClick={() => resolve(request.name, 'accepted')}>Accept</button></div></article>)}{requests.length === 0 && <div className="empty-requests"><span><Icon name="chat" size={34} /></span><h2>No message requests</h2><p>New requests from group members will appear here.</p></div>}</main><p className="request-privacy">When someone from a group wants to talk, their request appears here. They won’t know if you ignore it.</p></div>
+  const chat = useMessenger('survivor', false)
+  const [, redraw] = useState(0)
+  const requests = chat.events.filter((event) => event.type === 'message.request' && !sessionStorage.getItem(`message-request-${event.id}`))
+  const resolve = async (id: string, result: 'accepted' | 'ignored') => {
+    const request = requests.find((item) => item.id === id)
+    if (!request) return
+    if (result === 'accepted' && chat.messenger) await chat.messenger.sendEvent([request.sender], 'message.request.accept', request.conversationId, { request_id: request.id })
+    sessionStorage.setItem(`message-request-${id}`, result); redraw((value) => value + 1)
+  }
+  let body: React.ReactNode
+  if (chat.state.kind === 'locked') body = <PinUnlock title="Unlock message requests" text="Enter your PIN to decrypt private requests." unlock={chat.unlock} />
+  else body = <main className="request-list">{requests.map((request) => <article key={request.id}><h2>{typeof request.body.from_name === 'string' ? request.body.from_name : `Member ${request.sender.slice(-4)}`}</h2><span>From: {typeof request.body.group_name === 'string' ? request.body.group_name : 'a support group'}</span><p>“{String(request.body.text || 'Would like to talk privately.')}”</p><div><button onClick={() => void resolve(request.id, 'ignored')}>Ignore</button><button onClick={() => void resolve(request.id, 'accepted')}>Accept</button></div></article>)}{requests.length === 0 && <div className="empty-requests"><span><Icon name="chat" size={34} /></span><h2>No message requests</h2><p>New encrypted requests from group members will appear here.</p></div>}</main>
+  return <div className="messages-screen request-screen"><header className="messages-header"><button className="messages-back" onClick={() => go('/app/messages')} aria-label="Go back"><Icon name="back" size={18} /></button><h1>Message requests</h1><Exit /></header>{body}<p className="request-privacy">When someone from a group wants to talk, their request appears here. They won’t know if you ignore it.</p></div>
 }
 
 export default function Messages() { return window.location.pathname.endsWith('/requests') ? <Requests /> : <Inbox /> }

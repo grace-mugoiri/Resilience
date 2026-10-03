@@ -34,9 +34,12 @@ function Butterfly({ className = '' }: { className?: string }) {
 function App() {
   const [online, setOnline] = useState(navigator.onLine)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [showInstallHelp, setShowInstallHelp] = useState(false)
   const [installed, setInstalled] = useState(
-    window.matchMedia('(display-mode: standalone)').matches,
+    window.matchMedia('(display-mode: standalone)').matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true,
   )
+  const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
 
   useEffect(() => {
     const updateStatus = () => setOnline(navigator.onLine)
@@ -68,11 +71,25 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!showInstallHelp) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowInstallHelp(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [showInstallHelp])
+
   const installApp = async () => {
-    if (!installPrompt) return
+    if (installed) return
+    if (!installPrompt) {
+      setShowInstallHelp(true)
+      return
+    }
 
     await installPrompt.prompt()
-    await installPrompt.userChoice
+    const choice = await installPrompt.userChoice
+    if (choice.outcome === 'accepted') setInstalled(true)
     setInstallPrompt(null)
   }
 
@@ -183,9 +200,9 @@ function App() {
   const featureItems=[['◌','Private by design','Use a nickname. No real name, phone number or email is required.'],['◯','Supportive conversations','Talk with verified counselors, peers and people you trust.'],['⌁','Resilient access','Essential resources remain available even with limited connectivity.'],['ϟ','Direct support','Receive or send Bitcoin-powered support without a middleman.'],['◎','Your identity, yours','Carry your account safely across devices with backup words.']]
   const steps=[['01','Start safely','A quick safety check puts urgent help first.'],['02','Choose your path','Continue privately as a guest or create an account.'],['03','Talk securely','Connect with a counselor or a trusted support group.'],['04','Find real help','Access legal, medical, shelter and rights resources.']]
   return <main className="app-shell res-landing">
-    <nav className="nav res-nav" aria-label="Main navigation"><a className="brand" href="/" aria-label="Resilience home"><Butterfly className="brand-butterfly"/><span>Resilience<small>Privacy. Support. Freedom.</small></span></a><div className="nav-links"><a href="#features">Features</a><a href="#journey">How it works</a><a href="/counselor">Counselors</a><a href="/organization">Organizations</a></div><div className="nav-actions"><span className={`status ${online?'online':'offline'}`}><span className="status-dot"/>{online?'Online':'Offline'}</span><a className="nav-start" href="/onboarding/safety">Get support <span>→</span></a></div></nav>
+    <nav className="nav res-nav" aria-label="Main navigation"><a className="brand" href="/" aria-label="Resilience home"><Butterfly className="brand-butterfly"/><span>Resilience<small>Privacy. Support. Freedom.</small></span></a><div className="nav-links"><a href="#features">Features</a><a href="#journey">How it works</a><a href="/donate">Donate</a><a href="/counselor">Counselors</a><a href="/organization">Organizations</a></div><div className="nav-actions"><span className={`status ${online?'online':'offline'}`}><span className="status-dot"/>{online?'Online':'Offline'}</span>{!installed&&<button className="nav-install" onClick={() => void installApp()}>Install app</button>}<a className="nav-start" href="/onboarding/safety">Get support <span>→</span></a></div></nav>
 
-    <section className="res-hero"><div className="hero-copy"><p className="eyebrow">Private, resilient support</p><h1>Your safety.<br/>Your circle.<br/><em>Your control.</em></h1><p className="intro">Resilience is a private support space for survivors to talk, find trusted resources and receive direct help—without giving up their identity.</p><div className="actions"><a className="primary-action" href="/onboarding/safety">Get support <span>→</span></a><a className="counselor-action" href="/counselor">Join as a counselor</a></div><div className="trust-row"><span>◇ Pseudonymous</span><span>▢ Private</span><span>⌁ Decentralized</span></div></div><div className="hero-art" aria-hidden="true"><div className="hero-orbit"/><img className="hero-butterfly" src="/resilience-butterfly.png" alt=""/><Butterfly className="hero-butterfly-small one"/><Butterfly className="hero-butterfly-small two"/><div className="hero-card"><span>YOU’RE IN CONTROL</span><strong>A safer space to find your next step.</strong><small>No name. No judgement. Exit anytime.</small></div><p>Safer together.<br/>Stronger always.</p></div></section>
+    <section className="res-hero"><div className="hero-copy"><p className="eyebrow">Private, resilient support</p><h1>Your safety.<br/>Your circle.<br/><em>Your control.</em></h1><p className="intro">Resilience is a private support space for survivors to talk, find trusted resources and receive direct help—without giving up their identity.</p><div className="actions"><a className="primary-action" href="/onboarding/safety">Get support <span>→</span></a><a className="landing-donate-action" href="/donate">Donate with Lightning</a><button className="install-action" onClick={() => void installApp()} disabled={installed}>{installed?'App installed':'Install app'} <span aria-hidden="true">↓</span></button><a className="counselor-action" href="/counselor">Join as a counselor</a></div><div className="trust-row"><span>◇ Pseudonymous</span><span>▢ Private</span><span>⌁ Decentralized</span></div></div><div className="hero-art" aria-hidden="true"><div className="hero-orbit"/><img className="hero-butterfly" src="/resilience-butterfly.png" alt=""/><Butterfly className="hero-butterfly-small one"/><Butterfly className="hero-butterfly-small two"/><div className="hero-card"><span>YOU’RE IN CONTROL</span><strong>A safer space to find your next step.</strong><small>No name. No judgement. Exit anytime.</small></div><p>Safer together.<br/>Stronger always.</p></div></section>
 
     <section className="res-features" id="features" aria-label="Resilience features">{featureItems.map(([icon,title,copy])=><article key={title}><span>{icon}</span><h2>{title}</h2><p>{copy}</p></article>)}</section>
 
@@ -193,7 +210,9 @@ function App() {
 
     <section className="res-impact"><img className="impact-butterfly" src="/resilience-butterfly.png" alt=""/><article><p className="eyebrow">Built around you</p><h2>Quiet technology.<br/><em>Real freedom.</em></h2><p>Resilience helps people connect, get support and build safer futures without surveillance or unnecessary personal data.</p></article><article><p className="eyebrow">Why Nostr?</p><h2>A stronger foundation for safety.</h2><p>A decentralized network avoids a single point of control and lets people own their identity. The technology stays in the background; your needs stay first.</p></article></section>
 
-    <footer className="res-footer"><div><Butterfly/><strong>Resilience</strong><small>Private support. Real agency.</small></div><p>A growing network of survivors, counselors and organizations building safer paths forward.</p><div className="footer-actions"><a href="/onboarding/safety">Get support →</a><a href="/organization">Organization portal</a><a href="/donate">Donate with Lightning</a>{installPrompt&&!installed?<button onClick={installApp}>Install app ↓</button>:<small>{installed?'Installed on this device':'Install from your browser menu'}</small>}</div></footer>
+    <footer className="res-footer"><div><Butterfly/><strong>Resilience</strong><small>Private support. Real agency.</small></div><p>A growing network of survivors, counselors and organizations building safer paths forward.</p><div className="footer-actions"><a href="/onboarding/safety">Get support →</a><a href="/organization">Organization portal</a><a href="/donate">Donate with Lightning</a>{!installed?<button onClick={() => void installApp()}>Install app ↓</button>:<small>Installed on this device</small>}</div></footer>
+
+    {showInstallHelp&&<div className="install-dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)setShowInstallHelp(false)}}><section className="install-dialog" role="dialog" aria-modal="true" aria-labelledby="install-dialog-title"><button className="install-dialog-close" onClick={()=>setShowInstallHelp(false)} aria-label="Close installation guide">×</button><Butterfly/><p className="eyebrow">Install Resilience</p><h2 id="install-dialog-title">Keep support within reach.</h2>{isiOS?<><p>In Safari, tap the <strong>Share</strong> button, then choose <strong>Add to Home Screen</strong>.</p><ol><li>Open this page in Safari.</li><li>Tap Share at the bottom of the screen.</li><li>Tap “Add to Home Screen,” then “Add.”</li></ol></>:<><p>Your browser has not offered the automatic install prompt yet.</p><ol><li>Open the browser menu.</li><li>Choose “Install app” or “Add to Home screen.”</li><li>Confirm the installation.</li></ol></>}<small>Installation requires HTTPS, or localhost during development. Resilience will launch from your home screen or app launcher.</small><button className="install-dialog-done" onClick={()=>setShowInstallHelp(false)}>Got it</button></section></div>}
   </main>
 }
 
