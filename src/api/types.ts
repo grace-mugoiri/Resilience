@@ -7,9 +7,20 @@ export type WhoAmI = { pubkey: string }
 
 export type OrganizationStatus = 'pending' | 'approved' | 'suspended'
 
+export type OrganizationFocusArea =
+  | 'Legal aid'
+  | 'Safe shelter'
+  | 'Medical care'
+  | 'Counselling'
+  | 'Emergency support'
+  | 'Economic empowerment'
+  | 'Child and family support'
+  | 'Advocacy and education'
+
 export type OrganizationApplication = {
   name: string
   domain: string
+  focus_areas: OrganizationFocusArea[]
   directory_visibility: 'public'
 }
 
@@ -147,6 +158,13 @@ export type SupportGroup = {
   leader_name: string | null
   organization_name: string | null
 }
+export type SupportGroupInput = {
+  slug?: string | null
+  title?: string | null
+  description?: string | null
+  access?: 'open' | 'request'
+  leader_name?: string | null
+}
 export type MembershipInput = {
   role?: 'member' | 'moderator'
   expires_at?: string | null
@@ -166,7 +184,18 @@ export type GroupJoin = {
 
 export type CircleInvite = { circle_id: string; code: string; expires_at: string }
 export type CircleClaim = { circle_id: string; inviter_pubkey: string }
-export type CircleStatus = { circle_id: string | null; member_count: number; owner: boolean }
+export type CircleStatus = {
+  circle_id: string | null
+  member_count: number
+  owner: boolean
+  membership_revision: number | null
+}
+export type RoomRecipients = {
+  room_id: string
+  membership_revision: number
+  recipients: string[]
+}
+export type CircleRecipients = RoomRecipients & { circle_id: string }
 export type SafetyReport = { id: string; status: string; created_at: string }
 export type CounselorAvailability = {
   available: boolean
@@ -179,11 +208,13 @@ export type DisbursementInput = {
   amount_kes: number
   rate_source: string
   reason_code: 'transport' | 'pharmacy' | 'shelter' | 'food' | 'other'
+  note?: string | null
 }
 
 export type Disbursement = DisbursementInput & {
   id: string
   org_id: string
+  created_by_pubkey: string
   state: string
   approval_count: number
   approvals_required: number

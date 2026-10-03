@@ -186,4 +186,57 @@ describe('Resilience API client', () => {
       'http://localhost:8000/v1/orgs/org-id/counselor-invites',
     ])
   })
+
+  it('signs private-room routing and support-request reads without caching', async () => {
+    const calls: Array<{ url: string; request: RequestInit }> = []
+    const fetcher: typeof fetch = async (input, request = {}) => {
+      calls.push({ url: String(input), request })
+      return json({ room_id: 'room-id', membership_revision: 2, recipients: [] })
+    }
+    const secret = generateSecretKey()
+    const api = new ResilienceApi({
+      apiBase: 'http://localhost:8000',
+      signer: new NostrHttpSigner((operation) => operation(secret)),
+      fetcher,
+    })
+
+    await api.supportGroupRecipients('group/id')
+    await api.circleRecipients()
+    await api.listDisbursements('org id', 'CREATED')
+
+    expect(calls.map(({ url }) => url)).toEqual([
+      'http://localhost:8000/v1/support-groups/group%2Fid/recipients',
+      'http://localhost:8000/v1/circle/recipients',
+      'http://localhost:8000/v1/orgs/org%20id/disbursements?state=CREATED',
+    ])
+    for (const call of calls) {
+      expect(call.request.cache).toBe('no-store')
+      expect(verifyEvent(authEvent(call.request))).toBe(true)
+      expect(tag(authEvent(call.request), 'u')).toBe(call.url)
+    }
+  })
+
+  it('sends support-group creation metadata in the challenge-bound body', async () => {
+    const calls: Array<{ url: string; request: RequestInit }> = []
+    const fetcher: typeof fetch = async (input, request = {}) => {
+      calls.push({ url: String(input), request })
+      if (String(input).endsWith('/v1/auth/challenges')) {
+        return json({ challenge: 'fresh', scope: 'group:create:org', expires_at: '' }, 201)
+      }
+      return json({ id: 'group', org_id: 'org', active: true }, 201)
+    }
+    const secret = generateSecretKey()
+    const api = new ResilienceApi({
+      signer: new NostrHttpSigner((operation) => operation(secret)),
+      fetcher,
+    })
+    await api.createSupportGroup('org', {
+      title: 'Healing after abuse',
+      access: 'request',
+    })
+    expect(JSON.parse(calls[1].request.body as string)).toEqual({
+      title: 'Healing after abuse',
+      access: 'request',
+    })
+  })
 })

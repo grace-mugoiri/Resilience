@@ -62,6 +62,12 @@ body:has(.org-screen) { margin: 0; background: #eee9f2; }
 .org-form input, .org-unlock input, .org-decision textarea { width: 100%; padding: 1rem; border: 1px solid var(--org-line); border-radius: .9rem; color: #312838; background: white; outline: none; }
 .org-form input:focus, .org-unlock input:focus, .org-decision textarea:focus { border-color: var(--org-purple); box-shadow: 0 0 0 3px rgba(100,61,152,.1); }
 .org-form label small { color: var(--org-muted); font-weight: 400; }
+.org-focus { margin:0 0 1.2rem;padding:0;border:0; }
+.org-focus legend { margin-bottom:.65rem;color:#312838;font-weight:700; }
+.org-focus legend small { margin-left:.4rem;color:var(--org-muted);font-weight:400; }
+.org-focus>div { display:flex;flex-wrap:wrap;gap:.55rem; }
+.org-focus button { padding:.65rem .85rem;border:1px solid var(--org-line);border-radius:999px;color:#514858;background:white;font:inherit;font-size:.84rem;cursor:pointer; }
+.org-focus button.selected { border-color:var(--org-purple);color:var(--org-purple);background:var(--org-soft);font-weight:700; }
 .org-check { display: grid; grid-template-columns: auto 1fr; gap: .7rem; align-items: start; margin: 1rem 0; color: #463c4e; line-height: 1.45; }
 .org-check input { width: 1.2rem; height: 1.2rem; margin: .12rem 0 0; accent-color: var(--org-purple); }
 .org-form > .org-primary { margin-top: 1.4rem; }

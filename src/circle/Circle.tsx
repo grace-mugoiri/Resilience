@@ -1,4 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createAuthenticatedApi } from '../api/client'
+import type { CircleRecipients } from '../api/types'
+import { ChatNotice, PinUnlock } from '../messaging/ChatParts'
+import { useMessenger } from '../messaging/useMessenger'
 import './circle.css'
 
 type IconName = 'back' | 'exit' | 'person' | 'plus' | 'copy' | 'send' | 'home' | 'chat' | 'wallet' | 'settings' | 'more' | 'block' | 'report' | 'trash' | 'clock'
@@ -10,44 +14,124 @@ const paths: Record<IconName, React.ReactNode> = {
 }
 function Icon({ name, size = 22 }: { name: IconName; size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg> }
 const go = (path: string) => window.location.assign(path)
+const apiFor = (identity: { withPrivateKey: <T>(operation: (key: Uint8Array) => T) => T }) => createAuthenticatedApi(identity.withPrivateKey)
+const alias = (pubkey: string) => `Circle ${pubkey.slice(-4).toUpperCase()}`
 
 function Header({ title, back, menu }: { title: string; back: () => void; menu?: () => void }) {
   return <header className="circle-header"><button className="circle-back" onClick={back} aria-label="Go back"><Icon name="back" size={18} /></button><strong>{title}</strong>{menu && <button className="circle-more" onClick={menu} aria-label="Open member menu"><Icon name="more" size={19} /></button>}<button className="circle-exit" onClick={() => window.location.replace('/')}><Icon name="exit" size={17} />Exit</button></header>
 }
 function Nav({ active = 'home' }: { active?: 'home' | 'messages' }) { return <nav className="circle-nav"><a className={active === 'home' ? 'active' : ''} href="/app"><Icon name="home" /><span>Home</span></a><a className={active === 'messages' ? 'active' : ''} href="/app/messages"><Icon name="chat" /><span>Messages</span></a><a href="/app/wallet"><Icon name="wallet" /><span>Wallet</span></a><a href="/app/settings"><Icon name="settings" /><span>Settings</span></a></nav> }
 
+function useCircleRouting() {
+  const chat = useMessenger('survivor', false)
+  const [routing, setRouting] = useState<CircleRecipients | null>(null)
+  const [missing, setMissing] = useState(false)
+  const [error, setError] = useState('')
+  const refresh = useCallback(async () => {
+    if (chat.state.kind !== 'ready') return
+    const api = apiFor(chat.state.identity)
+    try { setRouting(await api.circleRecipients()); setMissing(false) }
+    catch (caught) {
+      if (caught instanceof Error && caught.message.includes('not found')) { setMissing(true); return }
+      if (caught instanceof Error && caught.message.includes('reissued')) {
+        await api.refreshCircleRoutingKey(); setRouting(await api.circleRecipients()); return
+      }
+      setError(caught instanceof Error ? caught.message : 'Could not load your circle.')
+    }
+  }, [chat.state])
+  useEffect(() => {
+    if (chat.state.kind !== 'ready') return
+    const timer = window.setTimeout(() => void refresh(), 0)
+    return () => window.clearTimeout(timer)
+  }, [chat.state.kind, refresh])
+  return { chat, routing, missing, error, refresh }
+}
+
 function CircleHome() {
-  const pending = sessionStorage.getItem('circle-pending-invite')
-  const members = ['Sunrise', 'Amani'].filter((name) => !sessionStorage.getItem(`circle-removed-${name.toLowerCase()}`))
-  return <div className="circle-screen"><Header title="My circle" back={() => go('/app')} /><p className="circle-private">Your circle is private. No one else can see who’s in it.</p><main className="circle-members">{members.map((name) => <article key={name}><span className="circle-avatar"><Icon name="person" /></span><strong>{name}</strong><button onClick={() => go(`/app/circle/${name.toLowerCase()}`)}>Message</button></article>)}{pending && <article className="pending-member"><span className="circle-avatar"><Icon name="clock" /></span><span><strong>{pending}</strong><small>Waiting for them to accept</small></span><em>Waiting</em></article>} {!pending && members.length < 3 && <button className="invite-circle" onClick={() => go('/app/circle/invite')}><Icon name="plus" />Invite someone (Max 3)</button>}</main><Nav /></div>
+  const { chat, routing, missing, error, refresh } = useCircleRouting()
+  if (chat.state.kind === 'locked') return <div className="circle-screen"><Header title="My circle" back={() => go('/app')} /><PinUnlock title="Unlock your circle" text="Enter your PIN to see your private circle." unlock={chat.unlock} /></div>
+  if (chat.state.kind === 'no-account') return <div className="circle-screen"><Header title="My circle" back={() => go('/app')} /><ChatNotice action={{ label: 'Create an account', run: () => go('/onboarding/create') }}>Create an account to keep a private circle.</ChatNotice></div>
+  return <div className="circle-screen"><Header title="My circle" back={() => go('/app')} /><p className="circle-private">Your circle is private. No public member list is published.</p><main className="circle-members">{routing?.recipients.map((pubkey) => <article key={pubkey}><span className="circle-avatar"><Icon name="person" /></span><strong>{alias(pubkey)}</strong><button onClick={() => go(`/app/circle/chat/${pubkey}`)}>Message</button></article>)}{missing && <ChatNotice action={{ label: 'Enter invite code', run: () => go('/app/circle/join') }}>Your circle is empty. Create one by inviting someone, or join with a one-time code.</ChatNotice>}{error && <p role="alert">{error}</p>}{chat.state.kind === 'ready' && (!routing || routing.recipients.length < 2) && <button className="invite-circle" onClick={() => go('/app/circle/invite')}><Icon name="plus" />Invite someone (Max 3)</button>}{routing && <button className="invite-circle" onClick={() => void refresh()}><Icon name="clock" />Refresh circle</button>}</main><Nav /></div>
 }
 
-type Message = { from: 'them' | 'me'; text: string }
-function MemberMenu({ close, member }: { close: () => void; member: string }) { const remove = () => { sessionStorage.setItem(`circle-removed-${member.toLowerCase()}`, 'true'); go('/app/circle') }; return <><button className="circle-backdrop" onClick={close} aria-label="Close member menu" /><section className="circle-member-menu"><span className="sheet-handle" /><div className="member-heading"><span className="circle-avatar"><Icon name="person" /></span><span><h2>{member}</h2><p>In your circle</p></span></div><button className="danger"><Icon name="block" />Block</button><button className="danger"><Icon name="report" />Report</button><button className="danger" onClick={remove}><Icon name="trash" />Remove from circle</button><small>They won’t be notified.</small></section></> }
-
-function CircleChat({ member }: { member: string }) {
-  const [menu, setMenu] = useState(false), [draft, setDraft] = useState('')
-  const [messages, setMessages] = useState<Message[]>([{ from: 'them', text: 'Hey, just wanted to check in. Are you safe tonight?' }, { from: 'me', text: 'Yes, I am home now. Everything is fine. Thanks for asking!' }])
-  const send = () => { if (!draft.trim()) return; setMessages((list) => [...list, { from: 'me', text: draft.trim() }]); setDraft('') }
-  const quick = (text: string) => setDraft(text)
-  return <div className="circle-screen circle-chat"><Header title={member} back={() => go('/app/circle')} menu={() => setMenu(true)} /><main className="circle-messages">{messages.map((message, index) => <div className={message.from} key={index}><p>{message.text}</p>{message.from === 'me' && <small>Sent</small>}</div>)}</main><div className="quick-actions"><button onClick={() => quick('Please check on me')}>Check on me</button><button onClick={() => quick('I need help')}>I need help</button></div><form className="circle-composer" onSubmit={(event) => { event.preventDefault(); send() }}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a message…" /><button aria-label="Send"><Icon name="send" /></button></form><Nav active="messages" />{menu && <MemberMenu member={member} close={() => setMenu(false)} />}</div>
+function MemberMenu({ close, peer, circleId }: { close: () => void; peer: string; circleId: string }) {
+  const chat = useMessenger('survivor', false)
+  const act = async (action: 'block' | 'report' | 'remove') => {
+    if (chat.state.kind !== 'ready') return
+    const api = apiFor(chat.state.identity)
+    if (action === 'block') await api.blockPeer(peer)
+    else if (action === 'report') await api.createReport({ subject_pubkey: peer, reason: 'other' })
+    else await api.removeCircleMember(circleId, peer)
+    go('/app/circle')
+  }
+  return <><button className="circle-backdrop" onClick={close} aria-label="Close member menu" /><section className="circle-member-menu"><span className="sheet-handle" /><div className="member-heading"><span className="circle-avatar"><Icon name="person" /></span><span><h2>{alias(peer)}</h2><p>In your circle</p></span></div><button className="danger" onClick={() => void act('block')}><Icon name="block" />Block</button><button className="danger" onClick={() => void act('report')}><Icon name="report" />Report</button><button className="danger" onClick={() => void act('remove')}><Icon name="trash" />Remove from circle</button><small>They won’t be notified.</small></section></>
 }
 
-const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-function makeInviteCode() { const bytes = crypto.getRandomValues(new Uint8Array(6)); return Array.from(bytes, (byte, index) => `${index === 3 ? '-' : ''}${alphabet[byte % alphabet.length]}`).join('') }
-function getInviteCode() { const existing = sessionStorage.getItem('circle-invite-code'); if (existing) return existing; const code = makeInviteCode(); sessionStorage.setItem('circle-invite-code', code); return code }
+function CircleChat({ peer }: { peer: string }) {
+  const { chat, routing } = useCircleRouting()
+  const [menu, setMenu] = useState(false), [draft, setDraft] = useState(''), [error, setError] = useState('')
+  const messages = useMemo(() => chat.messages.filter((item) => item.peer === peer), [chat.messages, peer])
+  const send = async () => {
+    if (!draft.trim() || !chat.messenger) return
+    const text = draft; setDraft(''); setError('')
+    try { await chat.messenger.send(peer, alias(peer), text) }
+    catch { setDraft(text); setError('That message could not be sent. Try again.') }
+  }
+  let body: React.ReactNode
+  if (chat.state.kind === 'locked') body = <PinUnlock title="Unlock this conversation" text="Enter your PIN to decrypt messages." unlock={chat.unlock} />
+  else if (chat.state.kind !== 'ready') body = <p>Connecting securely…</p>
+  else body = <main className="circle-messages">{messages.length === 0 && <p>Start a private conversation with this circle member.</p>}{messages.map((message) => <div className={message.fromMe ? 'me' : 'them'} key={message.id}><p>{message.text}</p>{message.fromMe && <small>{message.status === 'sending' ? 'Sending' : 'Sent'}</small>}</div>)}</main>
+  return <div className="circle-screen circle-chat"><Header title={alias(peer)} back={() => go('/app/circle')} menu={() => setMenu(true)} />{body}<div className="quick-actions"><button onClick={() => setDraft('Please check on me')}>Check on me</button><button onClick={() => setDraft('I need help')}>I need help</button></div>{error && <small role="alert">{error}</small>}{chat.state.kind === 'ready' && <form className="circle-composer" onSubmit={(event) => { event.preventDefault(); void send() }}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a message…" /><button aria-label="Send"><Icon name="send" /></button></form>}<Nav active="messages" />{menu && routing && <MemberMenu peer={peer} circleId={routing.circle_id} close={() => setMenu(false)} />}</div>
+}
 
 function Invite() {
-  const [code] = useState(getInviteCode), [copied, setCopied] = useState(false), [pending, setPending] = useState(sessionStorage.getItem('circle-pending-invite'))
+  const { chat } = useCircleRouting()
+  const [code, setCode] = useState(''), [copied, setCopied] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState('')
+  const identity = chat.state.kind === 'ready' ? chat.state.identity : null
+  const createInvite = useCallback(async () => {
+    if (!identity) return
+    setLoading(true); setError('')
+    try { setCode((await apiFor(identity).createCircleInvite()).code) }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not create an invite.') }
+    finally { setLoading(false) }
+  }, [identity])
+  useEffect(() => {
+    if (!identity) return
+    const timer = window.setTimeout(() => void createInvite(), 0)
+    return () => window.clearTimeout(timer)
+  }, [identity, createInvite])
   const copy = async () => { await navigator.clipboard.writeText(code); setCopied(true); window.setTimeout(() => setCopied(false), 1600) }
-  const invite = (name: string) => { sessionStorage.setItem('circle-pending-invite', name); setPending(name) }
-  return <div className="circle-screen"><Header title="Invite someone" back={() => go('/app/circle')} /><main className="invite-content"><p>Nicknames can’t be searched, so only people you invite can join your circle.</p><h2>Share a one-time invite code</h2><div className="invite-code"><strong>{code}</strong><button onClick={copy} aria-label="Copy invite code"><Icon name="copy" /></button></div><small>{copied ? 'Copied to clipboard.' : 'Works once, expires in 24 hours.'}</small><h2>Invite someone you’ve talked with</h2>{['River', 'Hope'].map((name) => <article key={name}><span className="circle-avatar"><Icon name="person" /></span><strong>{name}</strong><button disabled={Boolean(pending)} onClick={() => invite(name)}>{pending === name ? 'Waiting' : 'Invite'}</button></article>)}</main><Nav /></div>
+  let body: React.ReactNode
+  if (chat.state.kind === 'locked') body = <PinUnlock title="Unlock your circle" text="Enter your PIN to create a private one-time invite." unlock={chat.unlock} />
+  else if (chat.state.kind === 'no-account') body = <ChatNotice action={{ label: 'Create an account', run: () => go('/onboarding/create') }}>Create an account before inviting someone to your circle.</ChatNotice>
+  else if (chat.state.kind === 'error') body = <ChatNotice action={{ label: 'Try again', run: () => void chat.retry() }}>{chat.state.message}</ChatNotice>
+  else if (chat.state.kind !== 'ready') body = <ChatNotice>Connecting securely…</ChatNotice>
+  else body = <main className="invite-content"><p>Only a person with this one-time code can join your circle.</p><h2>Share a one-time invite code</h2><div className="invite-code"><strong>{loading ? 'Creating…' : code || 'Unavailable'}</strong><button disabled={!code} onClick={() => void copy()} aria-label="Copy invite code"><Icon name="copy" /></button></div><small>{copied ? 'Copied to clipboard.' : 'Works once, expires in 24 hours.'}</small>{error && <><p role="alert">{error}</p><button type="button" onClick={() => void createInvite()}>Try again</button></>}<button onClick={() => go('/app/circle/join')}>I have an invite code</button></main>
+  return <div className="circle-screen"><Header title="Invite someone" back={() => go('/app/circle')} />{body}<Nav /></div>
+}
+
+function JoinCircle() {
+  const { chat } = useCircleRouting()
+  const [code, setCode] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const join = async () => {
+    if (chat.state.kind !== 'ready') return
+    setBusy(true); setError('')
+    try { await apiFor(chat.state.identity).claimCircleInvite(code); go('/app/circle') }
+    catch (caught) { setError(caught instanceof Error ? caught.message : 'This invite could not be claimed.'); setBusy(false) }
+  }
+  let body: React.ReactNode
+  if (chat.state.kind === 'locked') body = <PinUnlock title="Unlock your account" text="Enter your PIN before joining this private circle." unlock={chat.unlock} />
+  else if (chat.state.kind === 'no-account') body = <ChatNotice action={{ label: 'Create an account', run: () => go('/onboarding/create') }}>Create an account before joining a circle.</ChatNotice>
+  else if (chat.state.kind === 'error') body = <ChatNotice action={{ label: 'Try again', run: () => void chat.retry() }}>{chat.state.message}</ChatNotice>
+  else if (chat.state.kind !== 'ready') body = <ChatNotice>Connecting securely…</ChatNotice>
+  else body = <main className="invite-content"><p>Enter the one-time invite code exactly as it was shared with you.</p><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCD-EFGH" autoComplete="one-time-code" />{error && <p role="alert">{error}</p>}<button disabled={code.length < 8 || busy} onClick={() => void join()}>{busy ? 'Joining…' : 'Join circle'}</button></main>
+  return <div className="circle-screen"><Header title="Join a circle" back={() => go('/app/circle')} />{body}<Nav /></div>
 }
 
 export default function Circle() {
   const path = window.location.pathname
   if (path.endsWith('/invite')) return <Invite />
-  if (path.endsWith('/amani')) return <CircleChat member="Amani" />
-  if (path.endsWith('/sunrise')) return <CircleChat member="Sunrise" />
+  if (path.endsWith('/join')) return <JoinCircle />
+  if (path.includes('/chat/')) return <CircleChat peer={path.split('/').pop() || ''} />
   return <CircleHome />
 }
