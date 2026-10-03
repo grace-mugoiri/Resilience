@@ -6,14 +6,22 @@ import type {
   AuthorizationChallenge,
   Counselor,
   CounselorDirectory,
+  CounselorEnrollment,
+  CounselorEnrollmentFilter,
+  CounselorInvite,
+  CounselorInviteInput,
+  CounselorInviteRecord,
   Disbursement,
   DisbursementInput,
+  EncryptedCredential,
   Health,
   Membership,
   MembershipInput,
   OperationalKey,
   Organization,
+  OrganizationAccess,
   OrganizationApplication,
+  OrganizationDashboard,
   OrganizationStatus,
   SupportGroup,
   WhoAmI,
@@ -55,11 +63,14 @@ export class ResilienceApi {
   constructor({
     apiBase = runtimeConfig.apiBase,
     signer,
-    fetcher = fetch,
+    fetcher,
   }: ApiClientOptions = {}) {
     this.apiBase = apiBase.replace(/\/+$/, '')
     this.signer = signer
-    this.fetcher = fetcher
+    // Browser-native fetch performs an internal receiver check in some engines. Storing the
+    // unbound function as an object method makes `this.fetcher(...)` fail with
+    // "Illegal invocation", while test doubles (ordinary functions) appear to work.
+    this.fetcher = fetcher ?? globalThis.fetch.bind(globalThis)
   }
 
   private requireSigner() {
@@ -146,6 +157,16 @@ export class ResilienceApi {
     })
   }
 
+  myOrganization() {
+    return this.request<OrganizationAccess>('/v1/orgs/me', { auth: 'basic' })
+  }
+
+  organizationDashboard(orgId: string) {
+    return this.request<OrganizationDashboard>(`/v1/orgs/${enc(orgId)}/dashboard`, {
+      auth: 'basic',
+    })
+  }
+
   listCounselors(orgId: string, signal?: AbortSignal) {
     return this.request<CounselorDirectory>(`/v1/orgs/${enc(orgId)}/counsellors`, { signal })
   }
@@ -164,6 +185,12 @@ export class ResilienceApi {
     })
   }
 
+  listOperationalKeys(orgId: string) {
+    return this.request<OperationalKey[]>(`/v1/orgs/${enc(orgId)}/operational-keys`, {
+      auth: 'basic',
+    })
+  }
+
   revokeOperationalKey(orgId: string, pubkey: string, event: NostrEvent) {
     return this.request<OperationalKey>(
       `/v1/orgs/${enc(orgId)}/operational-keys/${enc(pubkey)}/revoke`,
@@ -175,6 +202,84 @@ export class ResilienceApi {
     return this.request<Counselor>(
       `/v1/orgs/${enc(orgId)}/counsellors/${enc(pubkey)}/profile`,
       { method: 'PUT', body: event },
+    )
+  }
+
+  createCounselorInvite(orgId: string, input: CounselorInviteInput) {
+    return this.request<CounselorInvite>(`/v1/orgs/${enc(orgId)}/counselor-invites`, {
+      method: 'POST',
+      body: input,
+      auth: { scope: `counselor:invite:${orgId}` },
+    })
+  }
+
+  listCounselorInvites(orgId: string) {
+    return this.request<CounselorInviteRecord[]>(
+      `/v1/orgs/${enc(orgId)}/counselor-invites`,
+      { auth: 'basic' },
+    )
+  }
+
+  claimCounselorInvite(inviteCode: string, profileEvent: NostrEvent) {
+    return this.request<CounselorEnrollment>('/v1/counselor-enrollments/claim', {
+      method: 'POST',
+      body: { invite_code: inviteCode, profile_event: profileEvent },
+      auth: 'basic',
+    })
+  }
+
+  listMyCounselorEnrollments() {
+    return this.request<CounselorEnrollment[]>('/v1/counselor-enrollments', {
+      auth: 'basic',
+    })
+  }
+
+  getCounselorEnrollment(enrollmentId: string) {
+    return this.request<CounselorEnrollment>(
+      `/v1/counselor-enrollments/${enc(enrollmentId)}`,
+      { auth: 'basic' },
+    )
+  }
+
+  updateCounselorEnrollmentProfile(enrollmentId: string, profileEvent: NostrEvent) {
+    return this.request<CounselorEnrollment>(
+      `/v1/counselor-enrollments/${enc(enrollmentId)}/profile`,
+      { method: 'PUT', body: { profile_event: profileEvent }, auth: 'basic' },
+    )
+  }
+
+  submitCounselorCredentials(enrollmentId: string, documents: EncryptedCredential[]) {
+    return this.request<CounselorEnrollment>(
+      `/v1/counselor-enrollments/${enc(enrollmentId)}/credentials`,
+      {
+        method: 'PUT',
+        body: { documents },
+        auth: { scope: `counselor:credentials:${enrollmentId}` },
+      },
+    )
+  }
+
+  listCounselorEnrollments(orgId: string, status?: CounselorEnrollmentFilter) {
+    const query = status ? `?status=${enc(status)}` : ''
+    return this.request<CounselorEnrollment[]>(
+      `/v1/orgs/${enc(orgId)}/counselor-enrollments${query}`,
+      { auth: 'basic' },
+    )
+  }
+
+  reviewCounselorEnrollment(
+    orgId: string,
+    enrollmentId: string,
+    decision: 'request-information' | 'approve' | 'reject',
+    message?: string,
+  ) {
+    return this.request<CounselorEnrollment>(
+      `/v1/orgs/${enc(orgId)}/counselor-enrollments/${enc(enrollmentId)}/${decision}`,
+      {
+        method: 'POST',
+        body: { message: message || null },
+        auth: { scope: `counselor:review:${orgId}` },
+      },
     )
   }
 

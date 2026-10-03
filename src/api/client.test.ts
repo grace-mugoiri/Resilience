@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { generateSecretKey, verifyEvent, type NostrEvent } from 'nostr-tools/pure'
 import { ResilienceApi } from './client'
 import { NostrHttpSigner } from './nip98'
@@ -18,6 +18,23 @@ const tag = (event: NostrEvent, name: string) =>
   event.tags.find(([tagName]) => tagName === name)?.[1]
 
 describe('Resilience API client', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('binds the browser fetch implementation when no test fetcher is supplied', async () => {
+    const nativeLikeFetch = vi.fn(function (this: typeof globalThis) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation')
+      return Promise.resolve(json({ status: 'ok' }))
+    }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', nativeLikeFetch)
+
+    const api = new ResilienceApi({ apiBase: 'http://localhost:8000' })
+
+    await expect(api.health()).resolves.toEqual({ status: 'ok' })
+    expect(nativeLikeFetch).toHaveBeenCalledOnce()
+  })
+
   it('performs challenge-bound sensitive operations', async () => {
     const calls: Array<{ url: string; request: RequestInit }> = []
     const fetcher: typeof fetch = async (input, request = {}) => {
@@ -90,6 +107,42 @@ describe('Resilience API client', () => {
     expect(tag(authEvent(operation), 'payload')).toBe(digest)
   })
 
+  it('challenge-binds encrypted counselor credential submissions to the application', async () => {
+    const calls: Array<{ url: string; request: RequestInit }> = []
+    const fetcher: typeof fetch = async (input, request = {}) => {
+      const url = String(input)
+      calls.push({ url, request })
+      if (url.endsWith('/v1/auth/challenges')) {
+        return json({ challenge: 'credential-challenge', scope: 'counselor:credentials:enrollment-id', expires_at: '' }, 201)
+      }
+      return json({ id: 'enrollment-id', status: 'under_review' })
+    }
+    const secret = generateSecretKey()
+    const api = new ResilienceApi({
+      apiBase: 'http://localhost:8000',
+      signer: new NostrHttpSigner((operation) => operation(secret)),
+      fetcher,
+    })
+    const documents = [{
+      v: 1 as const,
+      algorithm: 'aes-256-gcm+nip44-v2' as const,
+      recipient_pubkey: 'ab'.repeat(32),
+      wrapped_key: 'wrapped',
+      iv: 'iv',
+      ciphertext: 'ciphertext',
+      media_type: 'application/pdf' as const,
+    }]
+
+    await api.submitCounselorCredentials('enrollment-id', documents)
+
+    expect(calls.map(({ url }) => url)).toEqual([
+      'http://localhost:8000/v1/auth/challenges',
+      'http://localhost:8000/v1/counselor-enrollments/enrollment-id/credentials',
+    ])
+    expect(tag(authEvent(calls[1].request), 'scope')).toBe('counselor:credentials:enrollment-id')
+    expect(JSON.parse(calls[1].request.body as string)).toEqual({ documents })
+  })
+
   it('surfaces FastAPI details without leaking cookies or referrers', async () => {
     let request: RequestInit | undefined
     const api = new ResilienceApi({
@@ -106,5 +159,31 @@ describe('Resilience API client', () => {
     expect(request?.credentials).toBe('omit')
     expect(request?.referrerPolicy).toBe('no-referrer')
   })
-})
 
+  it('reads organization portal state with the operational identity', async () => {
+    const calls: string[] = []
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.endsWith('/dashboard')) return json({ active_invites: 2 })
+      if (url.endsWith('/counselor-invites')) return json([])
+      return json({ organization: { id: 'org-id' }, actor: 'operational', operational_key: {} })
+    }
+    const secret = generateSecretKey()
+    const api = new ResilienceApi({
+      apiBase: 'http://localhost:8000',
+      signer: new NostrHttpSigner((operation) => operation(secret)),
+      fetcher,
+    })
+
+    await api.myOrganization()
+    await api.organizationDashboard('org-id')
+    await api.listCounselorInvites('org-id')
+
+    expect(calls).toEqual([
+      'http://localhost:8000/v1/orgs/me',
+      'http://localhost:8000/v1/orgs/org-id/dashboard',
+      'http://localhost:8000/v1/orgs/org-id/counselor-invites',
+    ])
+  })
+})

@@ -101,6 +101,7 @@
 .co-screen input:focus { border-color: #683f9f; box-shadow: 0 0 0 3px rgba(104,63,159,.1); }
 .co-screen small { display: block; color: #716978; line-height: 1.45; }
 .co-screen label > small { margin-top: .55rem; font-weight: 400; }
+.co-error { color: #b62b24 !important; font-weight: 700; }
 
 .co-primary,
 .co-secondary {
@@ -183,6 +184,7 @@
 .co-credentials > p { margin-top: -.25rem; }
 .co-docs { display: grid; gap: 1rem; }
 .co-docs section > label { display: block; margin-bottom: .5rem; }
+.co-docs section > label.co-file,
 .co-docs section > button {
   width: 100%;
   display: grid;
@@ -196,6 +198,10 @@
   color: #392f40;
   background: white;
 }
+.co-docs section > label.co-file { cursor: pointer; font-weight: 400; }
+.co-docs section > label.co-file.selected { border-color: #683f9f; }
+.co-docs .co-file > span:first-child { color: #683f9f; font-size: 1.35rem; }
+.co-docs .co-file > span:last-child { min-width: 0; }
 .co-docs section > button.failed { border-color: #cf392f; cursor: pointer; }
 .co-docs button > span:first-child { color: #683f9f; font-size: 1.35rem; }
 .co-docs button > span:last-child { min-width: 0; }
@@ -215,6 +221,41 @@
   cursor: pointer;
 }
 .co-credentials .co-primary { margin-top: 1.4rem; }
+
+.co-security > p { margin-top: -.4rem; }
+.co-security > label { margin-top: 1rem; }
+.co-security aside,
+.co-backup aside {
+  display: flex;
+  gap: .8rem;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  color: #51465c;
+  background: #eee5f8;
+  line-height: 1.5;
+}
+.co-backup ol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .65rem;
+  margin: .75rem 0;
+  padding: 0;
+  list-style: none;
+}
+.co-backup li {
+  display: flex;
+  gap: .65rem;
+  align-items: center;
+  padding: .8rem;
+  border: 1px solid #e2dce8;
+  border-radius: .8rem;
+  background: white;
+}
+.co-backup li small { min-width: 1.1rem; color: #8a8190; }
+.co-backup-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; }
+.co-backup-actions .co-secondary { margin-top: .35rem; }
+.co-backup .co-primary { margin-top: 1.25rem; }
 
 .co-status { text-align: center; }
 .co-status > section { display: flex; flex-direction: column; align-items: center; padding-top: .6rem; }
