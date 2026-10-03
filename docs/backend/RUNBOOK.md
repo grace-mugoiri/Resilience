@@ -115,6 +115,13 @@ Sensitive writes additionally require a one-use challenge. First request a chall
 its exact scope and value in the signed operation:
 
 ```bash
+python scripts/nostr_dev.py organization-approve \
+  --sec "$ADMIN_SEC" --api "$API" --org-id "$ORG_ID"
+```
+
+The equivalent low-level calls are:
+
+```bash
 SCOPE="admin:org:approve:$ORG_ID"
 BODY=$(jq -nc --arg scope "$SCOPE" '{scope:$scope}')
 AUTH=$(python scripts/nostr_dev.py auth --sec "$ADMIN_SEC" \
@@ -285,6 +292,22 @@ minimal:
 Do not add legal names, filenames, license numbers, or other plaintext metadata to this payload.
 
 ### NIP-05 during local organization approval
+
+The one-command local workflow selects the newest pending organization, creates a temporary
+NIP-05 fixture, provisions a gitignored development admin identity, rebuilds the required
+services, and sends the normal signed approval request:
+
+```bash
+.venv/bin/python scripts/local_approve_org.py
+# Or select one explicitly:
+.venv/bin/python scripts/local_approve_org.py --org-id <organization UUID>
+```
+
+The script never bypasses NIP-05, admin authentication, or scoped one-use challenges. It merely
+hosts the expected document inside the local Compose network. Do not run its `nip05-dev` service
+or use its generated admin identity in production.
+
+The manual equivalent follows.
 
 An organization must normally host `https://<domain>/.well-known/nostr.json?name=_`. For local
 development, create the same file and serve it without putting the root key on the API server:

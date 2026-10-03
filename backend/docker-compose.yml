@@ -82,6 +82,16 @@ services:
     depends_on:
       api: {condition: service_started}
 
+  # Local-only NIP-05 fixture used by scripts/local_approve_org.py. The generated file and
+  # development admin secret are gitignored. Production deployments must serve NIP-05 from the
+  # organization's real HTTPS domain and should not run this service.
+  nip05-dev:
+    build: .
+    command: ["python", "-m", "http.server", "9000", "--directory", "/nip05"]
+    volumes:
+      - ./.dev-nip05:/nip05:ro
+    expose: ["9000"]
+
 volumes:
   pgdata:
   relaydata1:

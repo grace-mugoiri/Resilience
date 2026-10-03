@@ -172,8 +172,24 @@ response includes the root-signed cancellation as `roster_key_revocation`.
 
 ### Sensitive approval commands
 
+For the complete local-only flow, including a temporary NIP-05 fixture and development admin key:
+
+```bash
+.venv/bin/python scripts/local_approve_org.py
+# Optional when more than one application is pending:
+.venv/bin/python scripts/local_approve_org.py --org-id <organization UUID>
+```
+
 Approval and suspension calls use a short-lived, one-use server challenge in addition to NIP-98.
-With `ADMIN_SEC`, `ORG_ID`, and `API` set, approve an organization like this:
+With `ADMIN_SEC`, `ORG_ID`, and `API` set, the development helper performs the complete
+challenge-bound organization approval:
+
+```bash
+python scripts/nostr_dev.py organization-approve \
+  --sec "$ADMIN_SEC" --api "$API" --org-id "$ORG_ID"
+```
+
+The equivalent low-level sequence is:
 
 ```bash
 SCOPE="admin:org:approve:$ORG_ID"

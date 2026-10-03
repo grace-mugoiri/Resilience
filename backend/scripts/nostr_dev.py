@@ -8,6 +8,8 @@
   python scripts/nostr_dev.py revoke-key --sec <root hex> --operational-pubkey <hex>
   python scripts/nostr_dev.py counselor-invite --sec <verification operational hex> \
       --api http://localhost:8000 --org-id <uuid> --review-pubkey <hex>
+  python scripts/nostr_dev.py organization-approve --sec <platform admin hex> \
+      --api http://localhost:8000 --org-id <uuid>
   python scripts/nostr_dev.py roster --sec <hex> [--days 30] <counsellor pubkey> ...
   python scripts/nostr_dev.py profile --sec <hex> --name "Counsellor Grace" \
       [--about "..."] [--specialty "Trauma support" ...] [--language English ...] \
@@ -120,6 +122,29 @@ def create_counselor_invite(
     )
 
 
+def approve_organization(secret: str, api: str, org_id: str) -> dict:
+    """Perform the challenge-bound platform-admin approval in one dev command."""
+    api = api.rstrip("/")
+    scope = f"admin:org:approve:{org_id}"
+    challenge_url = f"{api}/v1/auth/challenges"
+    challenge_body = json.dumps({"scope": scope}, separators=(",", ":"))
+    challenge_response = post_json(
+        challenge_url,
+        challenge_body,
+        auth_value(secret, challenge_url, "POST", challenge_body),
+    )
+    challenge = challenge_response.get("challenge")
+    if not isinstance(challenge, str) or not challenge:
+        raise RuntimeError("API challenge response did not contain a challenge")
+
+    approve_url = f"{api}/v1/admin/orgs/{org_id}/approve"
+    return post_json(
+        approve_url,
+        "",
+        auth_value(secret, approve_url, "POST", "", scope, challenge),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -130,6 +155,7 @@ def main() -> None:
         "authorize-key",
         "revoke-key",
         "counselor-invite",
+        "organization-approve",
         "roster",
         "profile",
     ):
@@ -151,6 +177,9 @@ def main() -> None:
             p.add_argument("--org-id", required=True)
             p.add_argument("--review-pubkey", required=True, help="credential-review public key")
             p.add_argument("--hours", type=invite_hours, default=168)
+        if name == "organization-approve":
+            p.add_argument("--api", default="http://localhost:8000")
+            p.add_argument("--org-id", required=True)
         if name == "authorize-key":
             p.add_argument("--days", type=int, default=30)
             p.add_argument(
@@ -187,6 +216,12 @@ def main() -> None:
         except RuntimeError as exc:
             parser.exit(1, f"error: {exc}\n")
         print(json.dumps(invitation, indent=2))
+    elif args.cmd == "organization-approve":
+        try:
+            organization = approve_organization(args.sec, args.api, args.org_id)
+        except RuntimeError as exc:
+            parser.exit(1, f"error: {exc}\n")
+        print(json.dumps(organization, indent=2))
     elif args.cmd == "roster":
         expires = int(time.time()) + args.days * 86400
         tags = [["d", "verified-counsellors"], *(["p", m] for m in args.members)]
