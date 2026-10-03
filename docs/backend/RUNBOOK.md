@@ -78,6 +78,44 @@ Delete all local database and relay data only when intentionally starting over:
 docker compose down -v
 ```
 
+### Reusable run configurations
+
+The backend includes a `Makefile`, so terminal commands, CI, and editor tasks all use the same
+entry points:
+
+| Command | What it runs |
+|---|---|
+| `make up` | Build and start the complete Docker stack in the background |
+| `make down` | Stop the stack while preserving database and relay volumes |
+| `make ps` | Show container and health status |
+| `make logs` | Follow API, worker, policy, and relay logs |
+| `make db` | Start only PostgreSQL for local Python debugging |
+| `make migrate` | Start PostgreSQL and apply Alembic migrations |
+| `make api` | Migrate, then run FastAPI locally with reload |
+| `make worker` | Run the background worker locally |
+| `make relay-policy` | Run the relay admission service locally |
+| `make sign-config` | Sign client config using the selected env file |
+| `make lint` | Run `ruff check .` |
+| `make format-check` | Run `ruff format --check .` |
+| `make test` | Run the backend test suite |
+| `make check` | Run lint, formatting, and tests |
+
+All targets use `.env` by default. Select another profile with `ENV_FILE`:
+
+```bash
+make ENV_FILE=.env.staging up
+make ENV_FILE=.env.staging sign-config
+```
+
+The repository's `.vscode/launch.json` provides **Backend: FastAPI**, **Backend: Worker**,
+**Backend: Relay policy**, and a compound **Backend: Python services** launch. `.vscode/tasks.json`
+provides full-stack, logs, migration, and check tasks. Open the repository root—not `backend/`
+alone—so `${workspaceFolder}/backend` resolves correctly. The VS Code launch profiles read
+`backend/.env`; alternate profiles should use the Makefile commands.
+
+The local Python launch profiles do not start the two Nostr relay containers. Use `make up` when
+testing end-to-end relay delivery and failover.
+
 ## 4. Basic health checks
 
 ```bash
@@ -173,7 +211,21 @@ The authoritative request and response schemas are at `/docs` and `/openapi.json
 | POST | `/v1/orgs/{org_id}/support-groups` | `groups` key + challenge | Create an opaque support group |
 | PUT | `/v1/orgs/{org_id}/support-groups/{group_id}/members/{pubkey}` | `groups` key + challenge | Add/update a blinded membership |
 | DELETE | `/v1/orgs/{org_id}/support-groups/{group_id}/members/{pubkey}` | `groups` key + challenge | Remove a membership |
+| GET | `/v1/support-groups` | Public | Discover groups without exposing membership |
+| POST | `/v1/support-groups/{group_id}/join` | NIP-98 | Join or request access |
+| GET | `/v1/support-groups/{group_id}/membership` | NIP-98 | Read the caller's own membership state |
+| GET | `/v1/support-groups/{group_id}/recipients` | Active member NIP-98 | Get private NIP-17 fan-out keys and rotating room ID |
+| PUT | `/v1/support-groups/{group_id}/routing-key` | Active member NIP-98 | Reissue an encrypted legacy routing key |
+| POST | `/v1/circle/invites` | NIP-98 | Create a one-use private-circle invite |
+| POST | `/v1/circle/invites/claim` | NIP-98 | Claim a circle invite |
+| GET | `/v1/circle` | NIP-98 | Read caller-only circle state |
+| GET | `/v1/circle/recipients` | Active member NIP-98 | Get private NIP-17 fan-out keys and rotating room ID |
+| PUT | `/v1/circle/routing-key` | Active member NIP-98 | Reissue an encrypted legacy routing key |
+| DELETE | `/v1/circle/{circle_id}/members/{pubkey}` | Circle owner/member NIP-98 | Silently remove self or, for the owner, another member |
+| PUT/DELETE | `/v1/blocks/{pubkey}` | NIP-98 | Add/remove a blinded relay deny rule |
+| POST | `/v1/reports` | NIP-98 | Submit a report with optional explicit excerpts |
 | POST | `/v1/orgs/{org_id}/disbursements` | Counselor + challenge + idempotency key | Create and sign approval one |
+| GET | `/v1/orgs/{org_id}/disbursements` | Counselor or `payments` key | List own/all support requests, optionally filtered by state |
 | POST | `/v1/disbursements/{id}/approve` | `payments` key + challenge | Independent second approval |
 | POST | `/v1/disbursements/{id}/invoice` | Requesting counselor | Attach the survivor's invoice after approval two |
 | POST | `/v1/disbursements/{id}/paying` | `payments` key | Mark the payment as under way |

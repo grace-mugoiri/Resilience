@@ -69,6 +69,7 @@ class Organization(Base):
     directory_visibility: Mapped[str] = mapped_column(
         Text, default="public", server_default="public"
     )
+    focus_areas: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     nip05_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     per_payment_cap_sat: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     daily_cap_sat: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -204,6 +205,7 @@ class Disbursement(Base):
     amount_kes: Mapped[int] = mapped_column(Integer)
     rate_source: Mapped[str] = mapped_column(Text)
     reason_code: Mapped[str] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str] = mapped_column(Text, default="CREATED", server_default="CREATED")
     payment_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     invoice: Mapped[str | None] = mapped_column(Text)  # deleted once the payment is final
@@ -248,9 +250,7 @@ class SupportGroup(Base):
     """A private-message room with public discovery copy and private membership."""
 
     __tablename__ = "support_groups"
-    __table_args__ = (
-        CheckConstraint(_in("access", GROUP_ACCESS_MODES), name="ck_group_access"),
-    )
+    __table_args__ = (CheckConstraint(_in("access", GROUP_ACCESS_MODES), name="ck_group_access"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(
@@ -262,6 +262,7 @@ class SupportGroup(Base):
     access: Mapped[str] = mapped_column(Text, default="request", server_default="request")
     leader_name: Mapped[str | None] = mapped_column(String(80))
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    membership_revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -311,6 +312,7 @@ class PrivateCircle(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_hash: Mapped[str] = mapped_column(String(64), unique=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    membership_revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -321,6 +323,7 @@ class PrivateCircleMember(Base):
         ForeignKey("private_circles.id", ondelete="CASCADE"), primary_key=True
     )
     member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    member_box: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

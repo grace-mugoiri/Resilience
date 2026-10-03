@@ -41,15 +41,35 @@ KEY=$(python scripts/sign_config.py --dev | grep '^PLATFORM_PUBKEY=')
 sed -i "s/^PLATFORM_PUBKEY=.*/$KEY/" .env
 ```
 
-The Compose file publishes PostgreSQL on host port `5433` so it can coexist with a PostgreSQL
-installation on `5432`. Set the URL used by local commands:
+The example already uses PostgreSQL host port `5433` so it can coexist with a PostgreSQL
+installation on `5432`. `DATABASE_URL` is for commands run on the host; `DOCKER_DATABASE_URL`
+uses the Compose service name `db` and its internal port `5432`.
+
+### Switching environments
+
+Keep one untracked environment file per deployment, for example `.env`, `.env.staging`, and
+`.env.production`. Start Compose with the one you want:
 
 ```bash
-sed -i 's#@localhost:[0-9]*/resilience$#@localhost:5433/resilience#' .env
+docker compose --env-file .env up --build
+docker compose --env-file .env.staging up --build
 ```
 
-The API and worker containers use the Compose service name `db` and the internal database port
-`5432`; Compose configures this for them.
+Each file must set `BACKEND_ENV_FILE` to its own filename (for example,
+`BACKEND_ENV_FILE=.env.staging`). This makes Compose pass that same file into the API, worker,
+and relay-policy containers instead of always loading `.env`.
+
+`CLIENT_RELAY_URLS` is the source for the relay URLs embedded by `scripts/sign_config.py`.
+After changing the relay URLs or platform key, sign the client configuration with the matching
+file and restart the API:
+
+```bash
+python scripts/sign_config.py --env-file .env.staging
+```
+
+The frontend receives the new relay list from signed `GET /v1/config`; it does not need relay URLs
+of its own. `.env.production.example` documents the deployed values without containing real
+secrets.
 
 ## Run the full stack
 
@@ -57,6 +77,47 @@ From `backend/`:
 
 ```bash
 docker compose up --build
+```
+
+The same operation is available through the checked-in run commands:
+
+```bash
+make up
+make ps
+make logs
+make down
+```
+
+Use a different environment profile without editing the Makefile:
+
+```bash
+make ENV_FILE=.env.staging up
+make ENV_FILE=.env.staging sign-config
+```
+
+For local Python debugging, start only PostgreSQL and run the desired process:
+
+```bash
+make db
+make migrate
+make api             # FastAPI with reload
+make worker          # in another terminal
+make relay-policy    # in another terminal
+```
+
+Open the repository root in VS Code to use the equivalent **Backend: FastAPI**, **Backend:
+Worker**, **Backend: Relay policy**, and **Backend: Python services** Run and Debug entries. The
+tasks menu also contains full-stack start, stop, logs, migration, and code checks. These debug
+profiles read `backend/.env`; use the Makefile commands when selecting another env file.
+
+Run the local quality checks with:
+
+```bash
+make lint
+make format-check
+make test
+# or all three
+make check
 ```
 
 This starts PostgreSQL, the Nostr relay, the API, and the worker. The API applies database
@@ -279,6 +340,52 @@ request URL, the `method` tag must match the HTTP method, and write requests mus
 hash of the exact request body in a `payload` tag. Send the base64-encoded event in
 `Authorization: Nostr <event>`.
 
+### Private messaging control-plane APIs
+
+Message plaintext and ciphertext are not stored by FastAPI. Clients build NIP-17/NIP-44/NIP-59
+events locally and publish them to the configured relays. These REST endpoints provide only the
+authenticated control plane needed to decide who receives those events:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/support-groups` | Public group discovery copy; never includes members |
+| `POST /v1/support-groups/{group_id}/join` | Join an open group or create a private join request |
+| `GET /v1/support-groups/{group_id}/recipients` | Active-member-only routing keys and rotating opaque room ID |
+| `PUT /v1/support-groups/{group_id}/routing-key` | Reissue the caller's encrypted routing key after migration |
+| `POST /v1/circle/invites` | Create a one-use circle invitation |
+| `POST /v1/circle/invites/claim` | Join the invitation's private circle |
+| `GET /v1/circle/recipients` | Circle-member-only routing keys and rotating opaque room ID |
+| `PUT /v1/circle/routing-key` | Reissue the caller's encrypted routing key after migration |
+| `PUT/DELETE /v1/blocks/{peer_pubkey}` | Apply or remove a relay deny rule |
+| `POST /v1/reports` | Submit a safety report; excerpts are optional and explicit |
+
+Recipient keys are AES-256-GCM encrypted at rest and bound to the exact membership row. The API
+decrypts them only for an authenticated, active room member and marks responses `Cache-Control:
+no-store`. A room ID changes whenever membership changes, giving clients a clean history boundary.
+The endpoint deliberately does not provide display metadata or a UI member list. Any member can
+still learn the routing public keys required for NIP-17 fan-out, which is an unavoidable tradeoff
+of client-side multi-recipient delivery.
+
+After deploying migration `0009`, an existing member whose old row has no routing box should call
+the relevant `PUT .../routing-key` endpoint once. Group clients may also call `POST .../join`
+again; an already-active membership is preserved and its routing key is repaired.
+
+### Counselor support requests
+
+The existing disbursement workflow is also the backend for the counselor's **Request support**
+screen:
+
+- `POST /v1/orgs/{org_id}/disbursements` creates a request with amount, reason code, and optional
+  non-identifying note. It requires a currently verified counselor plus a scoped one-use challenge.
+- `GET /v1/orgs/{org_id}/disbursements` lets a counselor see only requests they created; an active
+  organization `payments` key may see all organization requests. `?state=CREATED` and the other
+  documented state values filter the list.
+- `GET /v1/disbursements/{id}` returns one authorized request.
+- `POST /v1/disbursements/{id}/approve` records the required independent payments-key approval.
+
+No survivor pubkey, nickname, phone number, location, or account ID belongs in this record. The
+survivor-facing app receives eventual wallet funds through the separate payment flow.
+
 ## Configuration
 
 | Setting | Purpose |
@@ -291,6 +398,7 @@ hash of the exact request body in a `payload` tag. Send the base64-encoded event
 | `ADMIN_PUBKEYS` | Comma-separated hex public keys allowed to administer organisations |
 | `NIP05_TIMEOUT_SECONDS` | Timeout for organisation website checks |
 | `NIP05_DEV_BASE_URL` | Local NIP-05 test-site override; only used when `APP_ENV` is `dev` or `test` |
+| `MEMBERSHIP_BOX_KEY` | Independent high-entropy secret used to encrypt private-room routing keys at rest |
 | `LIGHTNING_NETWORK` | Network an attached invoice must be for: `tbs` (signet, the default), `bc` (mainnet), `tb` (testnet) or `bcrt` (regtest) |
 
 Do not commit `.env`, private keys, or generated signed configuration files. The example settings

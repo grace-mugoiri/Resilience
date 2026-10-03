@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,6 +18,12 @@ from app.db.models import (
     SupportGroupMembership,
 )
 from app.db.session import get_db
+from app.privacy.member_box import (
+    membership_context,
+    opaque_room_id,
+    open_member_pubkey,
+    seal_member_pubkey,
+)
 from app.relay.membership import blind_pubkey
 from app.settings import Settings, get_settings
 
@@ -64,6 +70,12 @@ class MembershipOut(BaseModel):
     expires_at: datetime | None
 
 
+class RoomRecipientsOut(BaseModel):
+    room_id: str
+    membership_revision: int
+    recipients: list[str]
+
+
 def _group(db: Session, org_id: uuid.UUID, group_id: uuid.UUID) -> SupportGroup:
     group = db.get(SupportGroup, group_id)
     if group is None or group.org_id != org_id or not group.active:
@@ -94,13 +106,20 @@ def put_member(
         raise HTTPException(422, "membership expiry must be in the future")
     member_hash = blind_pubkey(settings.relay_policy_hmac_key, pubkey)
     member = db.get(SupportGroupMembership, (group_id, member_hash))
+    newly_active = member is None or not member.active
     if member is None:
         member = SupportGroupMembership(group_id=group_id, member_hash=member_hash)
         db.add(member)
     member.role = body.role
-    member.member_box = None
+    member.member_box = seal_member_pubkey(
+        settings, pubkey, membership_context("group", group_id, member_hash)
+    )
     member.expires_at = body.expires_at
     member.active = True
+    if newly_active:
+        group = db.get(SupportGroup, group_id)
+        assert group is not None
+        group.membership_revision += 1
     db.commit()
     return MembershipOut(
         group_id=group_id, role=member.role, active=member.active, expires_at=member.expires_at
@@ -171,12 +190,25 @@ def join_group(group_id: uuid.UUID, caller: NostrPubkey, db: Db, settings: Setti
     member_hash = blind_pubkey(settings.relay_policy_hmac_key, caller)
     member = db.get(SupportGroupMembership, (group_id, member_hash))
     if member is not None and member.active:
+        if member.member_box is None:
+            member.member_box = seal_member_pubkey(
+                settings,
+                caller,
+                membership_context("group", group_id, member_hash),
+            )
+            db.commit()
         return JoinOut(group_id=group_id, status="approved", role=member.role)
     if group.access == "open":
+        newly_active = member is None or not member.active
         if member is None:
             member = SupportGroupMembership(group_id=group_id, member_hash=member_hash)
             db.add(member)
+        member.member_box = seal_member_pubkey(
+            settings, caller, membership_context("group", group_id, member_hash)
+        )
         member.active = True
+        if newly_active:
+            group.membership_revision += 1
         db.commit()
         return JoinOut(group_id=group_id, status="approved", role=member.role)
     request = db.scalar(
@@ -190,12 +222,22 @@ def join_group(group_id: uuid.UUID, caller: NostrPubkey, db: Db, settings: Setti
     if request is None:
         # Kept only while the organisation reviews the request. It is erased on approval/rejection.
         request = SupportGroupJoinRequest(
-            group_id=group_id, member_hash=member_hash, member_box=caller
+            group_id=group_id,
+            member_hash=member_hash,
+            member_box=seal_member_pubkey(
+                settings,
+                caller,
+                membership_context("group-request", group_id, member_hash),
+            ),
         )
         db.add(request)
     elif request.status == "rejected":
         request.status = "pending"
-        request.member_box = caller
+        request.member_box = seal_member_pubkey(
+            settings,
+            caller,
+            membership_context("group-request", group_id, member_hash),
+        )
         request.reviewed_at = None
         request.reviewed_by_pubkey = None
     db.commit()
@@ -209,6 +251,9 @@ def leave_group(group_id: uuid.UUID, caller: NostrPubkey, db: Db, settings: Sett
     if member is None:
         raise HTTPException(404, "support-group membership not found")
     member.active = False
+    group = db.get(SupportGroup, group_id)
+    assert group is not None
+    group.membership_revision += 1
     db.commit()
     return JoinOut(group_id=group_id, status="rejected")
 
@@ -223,7 +268,7 @@ class JoinRequestOut(BaseModel):
 
 @router.get("/{group_id}/join-requests")
 def list_join_requests(
-    org_id: uuid.UUID, group_id: uuid.UUID, _key: MemberKey, db: Db
+    org_id: uuid.UUID, group_id: uuid.UUID, _key: MemberKey, db: Db, settings: SettingsDep
 ) -> list[JoinRequestOut]:
     _group(db, org_id, group_id)
     requests = db.scalars(
@@ -236,7 +281,11 @@ def list_join_requests(
         JoinRequestOut(
             id=item.id,
             group_id=item.group_id,
-            member_pubkey=item.member_box,
+            member_pubkey=open_member_pubkey(
+                settings,
+                item.member_box,
+                membership_context("group-request", group_id, item.member_hash),
+            ),
             status=item.status,
             created_at=item.created_at,
         )
@@ -251,6 +300,7 @@ def approve_join_request(
     request_id: uuid.UUID,
     reviewer: MemberKey,
     db: Db,
+    settings: SettingsDep,
 ) -> JoinOut:
     _group(db, org_id, group_id)
     request = db.get(SupportGroupJoinRequest, request_id)
@@ -260,7 +310,20 @@ def approve_join_request(
     if member is None:
         member = SupportGroupMembership(group_id=group_id, member_hash=request.member_hash)
         db.add(member)
+    pubkey = open_member_pubkey(
+        settings,
+        request.member_box,
+        membership_context("group-request", group_id, request.member_hash),
+    )
+    member.member_box = seal_member_pubkey(
+        settings,
+        pubkey,
+        membership_context("group", group_id, request.member_hash),
+    )
     member.active = True
+    group = db.get(SupportGroup, group_id)
+    assert group is not None
+    group.membership_revision += 1
     request.status = "approved"
     request.reviewed_by_pubkey = reviewer
     request.reviewed_at = datetime.now(UTC)
@@ -286,7 +349,90 @@ def remove_member(
     if member is None:
         raise HTTPException(404, "support-group member not found")
     member.active = False
+    group = db.get(SupportGroup, group_id)
+    assert group is not None
+    group.membership_revision += 1
     db.commit()
     return MembershipOut(
         group_id=group_id, role=member.role, active=member.active, expires_at=member.expires_at
+    )
+
+
+@member_router.get("/{group_id}/recipients")
+def group_recipients(
+    group_id: uuid.UUID,
+    caller: NostrPubkey,
+    db: Db,
+    settings: SettingsDep,
+    response: Response,
+) -> RoomRecipientsOut:
+    """Return active routing keys only to an active member; never expose them publicly."""
+    group = db.get(SupportGroup, group_id)
+    if group is None or not group.active:
+        raise HTTPException(404, "support group not found")
+    now = datetime.now(UTC)
+    caller_hash = blind_pubkey(settings.relay_policy_hmac_key, caller)
+    caller_member = db.get(SupportGroupMembership, (group_id, caller_hash))
+    if (
+        caller_member is None
+        or not caller_member.active
+        or (caller_member.expires_at is not None and caller_member.expires_at <= now)
+    ):
+        raise HTTPException(403, "active support-group membership required")
+    rows = db.scalars(
+        select(SupportGroupMembership).where(
+            SupportGroupMembership.group_id == group_id,
+            SupportGroupMembership.active.is_(True),
+            (SupportGroupMembership.expires_at.is_(None))
+            | (SupportGroupMembership.expires_at > now),
+        )
+    ).all()
+    try:
+        recipients = [
+            open_member_pubkey(
+                settings,
+                member.member_box or "",
+                membership_context("group", group_id, member.member_hash),
+            )
+            for member in rows
+            if member.member_hash != caller_hash
+        ]
+    except ValueError as exc:
+        raise HTTPException(409, "group routing keys must be reissued") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return RoomRecipientsOut(
+        room_id=opaque_room_id(settings, "group", group_id, group.membership_revision),
+        membership_revision=group.membership_revision,
+        recipients=recipients,
+    )
+
+
+@member_router.put("/{group_id}/routing-key", response_model=MembershipOut)
+def refresh_group_routing_key(
+    group_id: uuid.UUID,
+    caller: NostrPubkey,
+    db: Db,
+    settings: SettingsDep,
+) -> MembershipOut:
+    """Reissue the caller's encrypted routing key after a server-key migration."""
+    member_hash = blind_pubkey(settings.relay_policy_hmac_key, caller)
+    member = db.get(SupportGroupMembership, (group_id, member_hash))
+    now = datetime.now(UTC)
+    if (
+        member is None
+        or not member.active
+        or (member.expires_at is not None and member.expires_at <= now)
+    ):
+        raise HTTPException(403, "active support-group membership required")
+    member.member_box = seal_member_pubkey(
+        settings,
+        caller,
+        membership_context("group", group_id, member_hash),
+    )
+    db.commit()
+    return MembershipOut(
+        group_id=group_id,
+        role=member.role,
+        active=member.active,
+        expires_at=member.expires_at,
     )

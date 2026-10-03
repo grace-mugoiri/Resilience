@@ -18,6 +18,7 @@ class DisbursementIn(BaseModel):
     # Caller-reported FX source, kept for the audit trail. The API does not fetch or certify FX.
     rate_source: str = Field(min_length=1, max_length=120)
     reason_code: ReasonCode
+    note: str | None = Field(default=None, max_length=500)
 
     @field_validator("rate_source")
     @classmethod
@@ -60,6 +61,7 @@ class DisbursementOut(BaseModel):
     amount_kes: int
     rate_source: str
     reason_code: str
+    note: str | None
     state: str
     approval_count: int
     approvals_required: int

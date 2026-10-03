@@ -3,23 +3,23 @@
 #   docker compose up --build
 services:
   db:
-    image: postgres:16.15
+    image: "${POSTGRES_IMAGE:-postgres:16.15}"
     environment:
-      POSTGRES_USER: resilience
-      POSTGRES_PASSWORD: resilience
-      POSTGRES_DB: resilience
-    ports: ["5433:5432"]
+      POSTGRES_USER: "${POSTGRES_USER:-resilience}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-resilience}"
+      POSTGRES_DB: "${POSTGRES_DB:-resilience}"
+    ports: ["${POSTGRES_PORT:-5433}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U resilience"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       retries: 10
 
   relay-1:
-    image: scsibug/nostr-rs-relay:0.10.0
+    image: "${NOSTR_RELAY_IMAGE:-scsibug/nostr-rs-relay:0.10.0}"
     environment:
       RUST_LOG: warn
-    ports: ["7777:8080"]
+    ports: ["${RELAY_1_PORT:-7777}:8080"]
     volumes:
       - ../relay/config.toml:/usr/src/app/config.toml:ro
       - relaydata1:/usr/src/app/db
@@ -27,10 +27,10 @@ services:
       relay-policy: {condition: service_healthy}
 
   relay-2:
-    image: scsibug/nostr-rs-relay:0.10.0
+    image: "${NOSTR_RELAY_IMAGE:-scsibug/nostr-rs-relay:0.10.0}"
     environment:
       RUST_LOG: warn
-    ports: ["7778:8080"]
+    ports: ["${RELAY_2_PORT:-7778}:8080"]
     volumes:
       - ../relay/config-2.toml:/usr/src/app/config.toml:ro
       - relaydata2:/usr/src/app/db
@@ -39,9 +39,9 @@ services:
 
   relay-policy:
     build: .
-    env_file: .env
+    env_file: "${BACKEND_ENV_FILE:-.env}"
     environment:
-      DATABASE_URL: postgresql+psycopg://resilience:resilience@db:5432/resilience
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql+psycopg://resilience:resilience@db:5432/resilience}"
     command: ["python", "-m", "app.relay.server"]
     expose: ["50051"]
     healthcheck:
@@ -60,10 +60,10 @@ services:
 
   api:
     build: .
-    env_file: .env
+    env_file: "${BACKEND_ENV_FILE:-.env}"
     environment:
-      DATABASE_URL: postgresql+psycopg://resilience:resilience@db:5432/resilience
-    ports: ["8000:8000"]
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql+psycopg://resilience:resilience@db:5432/resilience}"
+    ports: ["${API_PORT:-8000}:8000"]
     depends_on:
       db: {condition: service_healthy}
     healthcheck:
@@ -75,9 +75,9 @@ services:
 
   worker:
     build: .
-    env_file: .env
+    env_file: "${BACKEND_ENV_FILE:-.env}"
     environment:
-      DATABASE_URL: postgresql+psycopg://resilience:resilience@db:5432/resilience
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql+psycopg://resilience:resilience@db:5432/resilience}"
     command: ["python", "-m", "app.worker"]
     depends_on:
       api: {condition: service_started}

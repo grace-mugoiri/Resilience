@@ -6,12 +6,24 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models import Organization
 
+OrganizationFocusArea = Literal[
+    "Legal aid",
+    "Safe shelter",
+    "Medical care",
+    "Counselling",
+    "Emergency support",
+    "Economic empowerment",
+    "Child and family support",
+    "Advocacy and education",
+]
+
 
 class OrgApplication(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=2, max_length=120)
     domain: str = Field(min_length=3, max_length=253)
+    focus_areas: list[OrganizationFocusArea] = Field(default_factory=list, max_length=5)
     # This consent is deliberately required: public kind-30000 p tags reveal the
     # organization-to-counselor association. Private discovery is not in this MVP.
     directory_visibility: Literal["public"]
@@ -25,6 +37,7 @@ class OrgOut(BaseModel):
     nip05: str  # what a client checks itself: _@<domain>
     status: str
     directory_visibility: Literal["public"]
+    focus_areas: list[OrganizationFocusArea]
     nip05_verified_at: datetime | None
 
     @classmethod
@@ -37,6 +50,7 @@ class OrgOut(BaseModel):
             nip05=f"_@{org.domain}",
             status=org.status,
             directory_visibility=org.directory_visibility,
+            focus_areas=org.focus_areas,
             nip05_verified_at=org.nip05_verified_at,
         )
 

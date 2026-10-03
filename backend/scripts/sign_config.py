@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.nostr.events import pubkey_of, sign_event  # noqa: E402
+from app.settings import Settings  # noqa: E402
 
 CONFIG_KIND = 30078  # NIP-78 application-specific data
 D_TAG = "resilience/client-config"
@@ -26,6 +27,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--in", dest="src", default="config/client-config.json")
     parser.add_argument("--out", default="config/client-config.signed.json")
+    parser.add_argument(
+        "--env-file",
+        default=".env",
+        help="environment file containing CLIENT_RELAY_URLS and related config",
+    )
     parser.add_argument("--dev", action="store_true", help="generate a throwaway key")
     parser.add_argument("--days", type=int, default=30, help="config validity period")
     args = parser.parse_args()
@@ -37,6 +43,10 @@ def main() -> None:
     pubkey = pubkey_of(secret)
     content = Path(args.src).read_text().replace("<platform-pubkey>", pubkey)
     parsed = json.loads(content)
+    settings = Settings(_env_file=args.env_file)
+    parsed["relays"] = settings.client_relay_urls
+    parsed["approved_orgs_list"] = settings.approved_orgs_list or f"30000:{pubkey}:approved-orgs"
+    content = json.dumps(parsed, separators=(",", ":"), sort_keys=True)
     if parsed.get("schema_version") != 1:
         sys.exit("client config schema_version must be 1")
     if len(set(parsed.get("relays", []))) < 2:

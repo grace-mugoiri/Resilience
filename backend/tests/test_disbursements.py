@@ -48,6 +48,7 @@ REQUEST = {
     "amount_kes": 500,
     "rate_source": "test quote",
     "reason_code": "transport",
+    "note": "Needs fare to reach a shelter tonight",
 }
 RESERVING = ("CREATED", "INVOICE_ATTACHED", "PAYING", "PAID", "FAILED")
 
@@ -176,6 +177,7 @@ def test_disbursement_needs_distinct_creator_and_payment_approval(client):
     assert created.status_code == 201
     assert created.json()["approval_count"] == 1
     assert created.json()["ready"] is False
+    assert created.json()["note"] == "Needs fare to reach a shelter tonight"
     approved = approve(client, created.json())
     assert approved.status_code == 200
     assert approved.json()["approval_count"] == 2

@@ -90,7 +90,12 @@ def test_unreachable_site_is_not_definitive():
 
 def test_dev_override_only_outside_production():
     dev = Settings(app_env="dev", nip05_dev_base_url="http://localhost:9000/")
-    prod = Settings(app_env="prod", nip05_dev_base_url="http://localhost:9000/")
+    prod = Settings(
+        app_env="prod",
+        nip05_dev_base_url="http://localhost:9000/",
+        relay_policy_hmac_key="r" * 32,
+        counselor_invite_hmac_key="i" * 32,
+    )
     assert nostr_json_url("wangu.org", dev) == "http://localhost:9000/.well-known/nostr.json?name=_"
     assert nostr_json_url("wangu.org", prod) == "https://wangu.org/.well-known/nostr.json?name=_"
 

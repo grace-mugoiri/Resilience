@@ -104,19 +104,21 @@ def _share_active_circle(db: Session, sender: str, recipient: str, settings: Set
     recipient_member = PrivateCircleMember.__table__.alias("circle_recipient")
     return bool(
         db.scalar(
-            select(exists())
-            .select_from(
-                sender_member.join(
-                    recipient_member,
-                    sender_member.c.circle_id == recipient_member.c.circle_id,
-                ).join(PrivateCircle, PrivateCircle.id == sender_member.c.circle_id)
-            )
-            .where(
-                sender_member.c.member_hash == sender_hash,
-                recipient_member.c.member_hash == recipient_hash,
-                sender_member.c.active.is_(True),
-                recipient_member.c.active.is_(True),
-                PrivateCircle.active.is_(True),
+            select(
+                exists()
+                .select_from(
+                    sender_member.join(
+                        recipient_member,
+                        sender_member.c.circle_id == recipient_member.c.circle_id,
+                    ).join(PrivateCircle, PrivateCircle.id == sender_member.c.circle_id)
+                )
+                .where(
+                    sender_member.c.member_hash == sender_hash,
+                    recipient_member.c.member_hash == recipient_hash,
+                    sender_member.c.active.is_(True),
+                    recipient_member.c.active.is_(True),
+                    PrivateCircle.active.is_(True),
+                )
             )
         )
     )
@@ -127,15 +129,17 @@ def _blocked(db: Session, sender: str, recipient: str, settings: Settings) -> bo
     recipient_hash = blind_pubkey(settings.relay_policy_hmac_key, recipient)
     return bool(
         db.scalar(
-            select(exists().where(
-                BlockedPeer.active.is_(True),
-                or_(
-                    (BlockedPeer.blocker_hash == sender_hash) &
-                    (BlockedPeer.blocked_hash == recipient_hash),
-                    (BlockedPeer.blocker_hash == recipient_hash) &
-                    (BlockedPeer.blocked_hash == sender_hash),
-                ),
-            ))
+            select(
+                exists().where(
+                    BlockedPeer.active.is_(True),
+                    or_(
+                        (BlockedPeer.blocker_hash == sender_hash)
+                        & (BlockedPeer.blocked_hash == recipient_hash),
+                        (BlockedPeer.blocker_hash == recipient_hash)
+                        & (BlockedPeer.blocked_hash == sender_hash),
+                    ),
+                )
+            )
         )
     )
 

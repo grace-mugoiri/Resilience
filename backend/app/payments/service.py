@@ -96,6 +96,7 @@ def to_out(db: Session, item: Disbursement, settings: Settings) -> DisbursementO
         amount_kes=item.amount_kes,
         rate_source=item.rate_source,
         reason_code=item.reason_code,
+        note=item.note,
         state=item.state,
         approval_count=count,
         approvals_required=settings.disbursement_approval_threshold,
@@ -193,6 +194,7 @@ def create_disbursement(
         amount_kes=body.amount_kes,
         rate_source=body.rate_source,
         reason_code=body.reason_code,
+        note=body.note.strip() if body.note and body.note.strip() else None,
         created_by_pubkey=actor,
     )
     db.add(item)
