@@ -8,5 +8,6 @@ psycopg[binary]==3.3.6
 coincurve==21.0.0
 cryptography==46.0.3
 httpx==0.28.1
+bolt11==2.2.0
 grpcio==1.75.1
 protobuf==6.33.0
