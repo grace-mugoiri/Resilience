@@ -7,7 +7,14 @@ from datetime import UTC, datetime
 from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import CounsellorAttestation, SupportGroup, SupportGroupMembership
+from app.db.models import (
+    BlockedPeer,
+    CounsellorAttestation,
+    PrivateCircle,
+    PrivateCircleMember,
+    SupportGroup,
+    SupportGroupMembership,
+)
 from app.relay.membership import blind_pubkey
 from app.settings import Settings
 
@@ -90,6 +97,49 @@ def _share_active_group(
     )
 
 
+def _share_active_circle(db: Session, sender: str, recipient: str, settings: Settings) -> bool:
+    sender_hash = blind_pubkey(settings.relay_policy_hmac_key, sender)
+    recipient_hash = blind_pubkey(settings.relay_policy_hmac_key, recipient)
+    sender_member = PrivateCircleMember.__table__.alias("circle_sender")
+    recipient_member = PrivateCircleMember.__table__.alias("circle_recipient")
+    return bool(
+        db.scalar(
+            select(exists())
+            .select_from(
+                sender_member.join(
+                    recipient_member,
+                    sender_member.c.circle_id == recipient_member.c.circle_id,
+                ).join(PrivateCircle, PrivateCircle.id == sender_member.c.circle_id)
+            )
+            .where(
+                sender_member.c.member_hash == sender_hash,
+                recipient_member.c.member_hash == recipient_hash,
+                sender_member.c.active.is_(True),
+                recipient_member.c.active.is_(True),
+                PrivateCircle.active.is_(True),
+            )
+        )
+    )
+
+
+def _blocked(db: Session, sender: str, recipient: str, settings: Settings) -> bool:
+    sender_hash = blind_pubkey(settings.relay_policy_hmac_key, sender)
+    recipient_hash = blind_pubkey(settings.relay_policy_hmac_key, recipient)
+    return bool(
+        db.scalar(
+            select(exists().where(
+                BlockedPeer.active.is_(True),
+                or_(
+                    (BlockedPeer.blocker_hash == sender_hash) &
+                    (BlockedPeer.blocked_hash == recipient_hash),
+                    (BlockedPeer.blocker_hash == recipient_hash) &
+                    (BlockedPeer.blocked_hash == sender_hash),
+                ),
+            ))
+        )
+    )
+
+
 def decide(
     db: Session,
     event: AdmissionEvent,
@@ -131,8 +181,12 @@ def decide(
     assert recipient is not None and authenticated_pubkey is not None
     if recipient == authenticated_pubkey:
         return AdmissionDecision(True, "permitted sender backup copy")
+    if _blocked(db, authenticated_pubkey, recipient, settings):
+        return AdmissionDecision(False, "restricted: delivery blocked by a participant")
     if _active_counsellor(db, authenticated_pubkey, now) or _active_counsellor(db, recipient, now):
         return AdmissionDecision(True, "permitted counsellor conversation")
     if _share_active_group(db, authenticated_pubkey, recipient, settings, now):
         return AdmissionDecision(True, "permitted support-group delivery")
+    if _share_active_circle(db, authenticated_pubkey, recipient, settings):
+        return AdmissionDecision(True, "permitted circle delivery")
     return AdmissionDecision(False, "restricted: sender and recipient have no active relationship")

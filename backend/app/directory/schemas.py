@@ -64,6 +64,9 @@ class CounsellorOut(BaseModel):
     profile: CounsellorProfileOut | None
     # The signed kind 0 event itself, so the client can check the counsellor's signature.
     profile_event: dict | None
+    available: bool = True
+    working_hours: str | None = None
+    availability_event: dict | None = None
 
 
 class CounsellorsOut(BaseModel):

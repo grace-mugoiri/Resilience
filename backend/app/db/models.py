@@ -30,6 +30,8 @@ COUNSELLOR_ENROLLMENT_STATUSES = (
 )
 REASON_CODES = ("transport", "pharmacy", "shelter", "food", "other")
 GROUP_MEMBER_ROLES = ("member", "moderator")
+GROUP_ACCESS_MODES = ("open", "request")
+GROUP_JOIN_STATUSES = ("pending", "approved", "rejected")
 DISBURSEMENT_STATES = (
     "CREATED",
     "INVOICE_ATTACHED",
@@ -243,20 +245,28 @@ class DisbursementApproval(Base):
 
 
 class SupportGroup(Base):
-    """An opaque group identifier. Names and topics remain encrypted in client messages."""
+    """A private-message room with public discovery copy and private membership."""
 
     __tablename__ = "support_groups"
+    __table_args__ = (
+        CheckConstraint(_in("access", GROUP_ACCESS_MODES), name="ck_group_access"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
+    slug: Mapped[str | None] = mapped_column(String(80), unique=True)
+    title: Mapped[str | None] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text)
+    access: Mapped[str] = mapped_column(Text, default="request", server_default="request")
+    leader_name: Mapped[str | None] = mapped_column(String(80))
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SupportGroupMembership(Base):
-    """HMAC-blinded member identities used only by relay admission policy."""
+    """HMAC-blinded identities for policy plus server-encrypted keys for member-only delivery."""
 
     __tablename__ = "support_group_memberships"
     __table_args__ = (
@@ -267,10 +277,103 @@ class SupportGroupMembership(Base):
         ForeignKey("support_groups.id", ondelete="CASCADE"), primary_key=True
     )
     member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    member_box: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(Text, default="member", server_default="member")
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SupportGroupJoinRequest(Base):
+    __tablename__ = "support_group_join_requests"
+    __table_args__ = (
+        CheckConstraint(_in("status", GROUP_JOIN_STATUSES), name="ck_group_join_status"),
+        UniqueConstraint("group_id", "member_hash", name="uq_group_join_member"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("support_groups.id", ondelete="CASCADE"), index=True
+    )
+    member_hash: Mapped[str] = mapped_column(String(64))
+    member_box: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
+    reviewed_by_pubkey: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PrivateCircle(Base):
+    """A circle is visible only through keyed hashes used by relay admission."""
+
+    __tablename__ = "private_circles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PrivateCircleMember(Base):
+    __tablename__ = "private_circle_members"
+
+    circle_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("private_circles.id", ondelete="CASCADE"), primary_key=True
+    )
+    member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CircleInvite(Base):
+    """One-use circle code. The inviter key is erased as soon as the code is claimed."""
+
+    __tablename__ = "circle_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    circle_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("private_circles.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    inviter_pubkey: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BlockedPeer(Base):
+    """Directionless relay deny rule stored only as HMAC-blinded public keys."""
+
+    __tablename__ = "blocked_peers"
+
+    blocker_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    blocked_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SafetyReport(Base):
+    __tablename__ = "safety_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    reporter_hash: Mapped[str] = mapped_column(String(64), index=True)
+    subject_pubkey: Mapped[str] = mapped_column(String(64), index=True)
+    reason: Mapped[str] = mapped_column(String(80))
+    evidence: Mapped[list | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, default="open", server_default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CounsellorAvailability(Base):
+    __tablename__ = "counsellor_availability"
+
+    counsellor_pubkey: Mapped[str] = mapped_column(String(64), primary_key=True)
+    available: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    working_hours: Mapped[str | None] = mapped_column(String(120))
+    auth_event: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class SeenAuthEvent(Base):
