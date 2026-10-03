@@ -16,9 +16,16 @@ from app.db.session import get_db
 Db = Annotated[Session, Depends(get_db)]
 
 
-def _active_key(db: Session, org_id: uuid.UUID, pubkey: str, key_scope: str) -> None:
+def _active_key(
+    db: Session,
+    org_id: uuid.UUID,
+    pubkey: str,
+    key_scope: str,
+    *,
+    require_approved: bool = True,
+) -> None:
     org = db.get(Organization, org_id)
-    if org is None or org.status != "approved":
+    if org is None or (require_approved and org.status != "approved"):
         raise HTTPException(404, "organisation not found")
     key = db.get(OrganizationOperationalKey, (org_id, pubkey))
     now = datetime.now(UTC)
@@ -40,6 +47,25 @@ def require_org_key(key_scope: str) -> Callable:
         return pubkey
 
     return dependency
+
+
+def require_org_manager(
+    request: Request,
+    pubkey: NostrPubkey,
+    db: Db,
+) -> str:
+    """Allow the offline root or an active verification key to read its own portal state.
+
+    Pending organisations need this read path while they wait for platform approval; mutating
+    counselor operations still use ``require_org_operation`` and therefore require approval.
+    """
+    org_id = uuid.UUID(request.path_params["org_id"])
+    org = db.get(Organization, org_id)
+    if org is None:
+        raise HTTPException(404, "organisation not found")
+    if pubkey != org.nostr_pubkey:
+        _active_key(db, org_id, pubkey, "verification", require_approved=False)
+    return pubkey
 
 
 def require_org_operation(key_scope: str, authorization_scope: str) -> Callable:

@@ -145,8 +145,8 @@ pytest -v
 ## Test signing helpers
 
 `scripts/nostr_dev.py` provides development-only helpers for creating Nostr test keys, NIP-98
-headers, NIP-05 test files, operational-key authorizations/revocations, signed counsellor rosters,
-and signed counsellor profiles. Use only throwaway secret keys with this script. Run
+headers, NIP-05 test files, operational-key authorizations/revocations, one-use counselor invites,
+signed counsellor rosters, and signed counsellor profiles. Use only throwaway secret keys with this script. Run
 `python scripts/nostr_dev.py --help` for usage.
 
 ### Organization key hierarchy
@@ -234,8 +234,8 @@ Counselor onboarding is organization-invited and has two independent gates:
 
 1. a `verification`-scoped organization key issues a high-entropy, single-use code;
 2. the counselor claims it with NIP-98 and a kind `0` profile signed by her new local key;
-3. the counselor encrypts each credential to the review key named by the invitation and submits
-   only NIP-44 v2 ciphertext;
+3. the counselor encrypts each credential with a fresh AES-256-GCM key and NIP-44-wraps that key to
+   the review key named by the invitation;
 4. the organization requests another encrypted copy, rejects, or approves the application;
 5. approval alone does not create a badge—the organization must publish a newer roster containing
    the counselor key. Only then is the signed profile promoted into the public directory.

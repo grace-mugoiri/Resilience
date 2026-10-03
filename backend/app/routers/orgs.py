@@ -2,15 +2,22 @@
 
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.nip98 import NostrPubkey
-from app.db.models import Organization
+from app.auth.org import require_org_manager
+from app.db.models import (
+    CounsellorEnrollment,
+    CounsellorInvite,
+    Organization,
+    OrganizationOperationalKey,
+)
 from app.db.session import get_db
 from app.directory.nip05 import DomainError, normalize_domain
 from app.directory.operational_keys import (
@@ -21,9 +28,13 @@ from app.directory.operational_keys import (
 from app.directory.profile import ProfileError, parse_profile
 from app.directory.roster import RosterError, parse_roster
 from app.directory.schemas import (
+    CounsellorCounts,
     CounsellorOut,
     CounsellorsOut,
+    EnrollmentCounts,
     OperationalKeyOut,
+    OrganizationAccessOut,
+    OrganizationDashboardOut,
     OrgApplication,
     OrgOut,
 )
@@ -41,6 +52,7 @@ from app.enrollment.service import promote_rostered_enrollments
 
 router = APIRouter(prefix="/v1/orgs", tags=["directory"])
 Db = Annotated[Session, Depends(get_db)]
+OrgManager = Annotated[str, Depends(require_org_manager)]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -74,6 +86,82 @@ def list_approved(db: Db, response: Response) -> list[OrgOut]:
         select(Organization).where(Organization.status == "approved").order_by(Organization.name)
     ).all()
     return [OrgOut.of(org) for org in orgs]
+
+
+@router.get("/me")
+def my_organization(pubkey: NostrPubkey, db: Db) -> OrganizationAccessOut:
+    """Return pending or approved organization state to its root or active operational key."""
+    root_org = db.scalar(select(Organization).where(Organization.nostr_pubkey == pubkey))
+    if root_org is not None:
+        return OrganizationAccessOut(
+            organization=OrgOut.of(root_org), actor="root", operational_key=None
+        )
+
+    now = datetime.now(UTC)
+    rows = db.execute(
+        select(Organization, OrganizationOperationalKey)
+        .join(
+            OrganizationOperationalKey,
+            OrganizationOperationalKey.org_id == Organization.id,
+        )
+        .where(
+            OrganizationOperationalKey.pubkey == pubkey,
+            OrganizationOperationalKey.valid_from <= now,
+            OrganizationOperationalKey.expires_at > now,
+            OrganizationOperationalKey.revoked_at.is_(None),
+        )
+    ).all()
+    if not rows:
+        raise HTTPException(404, "organisation not found")
+    if len(rows) != 1:
+        raise HTTPException(409, "operational key is associated with multiple organisations")
+    org, key = rows[0]
+    return OrganizationAccessOut(
+        organization=OrgOut.of(org),
+        actor="operational",
+        operational_key=_operational_key_out(key),
+    )
+
+
+@router.get("/{org_id}/dashboard")
+def organization_dashboard(
+    org_id: uuid.UUID,
+    _manager: OrgManager,
+    db: Db,
+) -> OrganizationDashboardOut:
+    """Small, non-sensitive summary for the organization portal."""
+    org = get_org(db, org_id)
+    enrollment_counts = EnrollmentCounts()
+    for enrollment_status, count in db.execute(
+        select(CounsellorEnrollment.status, func.count())
+        .where(CounsellorEnrollment.org_id == org_id)
+        .group_by(CounsellorEnrollment.status)
+    ):
+        setattr(enrollment_counts, enrollment_status, count)
+
+    counsellor_counts = CounsellorCounts()
+    if org.status == "approved":
+        for counsellor in counsellors_of(db, org).counsellors:
+            setattr(
+                counsellor_counts,
+                counsellor.status,
+                getattr(counsellor_counts, counsellor.status) + 1,
+            )
+    active_invites = db.scalar(
+        select(func.count())
+        .select_from(CounsellorInvite)
+        .where(
+            CounsellorInvite.org_id == org_id,
+            CounsellorInvite.used_at.is_(None),
+            CounsellorInvite.expires_at > datetime.now(UTC),
+        )
+    )
+    return OrganizationDashboardOut(
+        organization=OrgOut.of(org),
+        active_invites=active_invites or 0,
+        enrollments=enrollment_counts,
+        counsellors=counsellor_counts,
+    )
 
 
 @router.get("/{org_id}/counsellors")
@@ -112,6 +200,20 @@ def _operational_key_out(key) -> OperationalKeyOut:
         authorization_event=key.authorization_event,
         revocation_event=key.revocation_event,
     )
+
+
+@router.get("/{org_id}/operational-keys")
+def list_operational_keys(
+    org_id: uuid.UUID,
+    _manager: OrgManager,
+    db: Db,
+) -> list[OperationalKeyOut]:
+    keys = db.scalars(
+        select(OrganizationOperationalKey)
+        .where(OrganizationOperationalKey.org_id == org_id)
+        .order_by(OrganizationOperationalKey.created_at.desc())
+    ).all()
+    return [_operational_key_out(key) for key in keys]
 
 
 @router.put("/{org_id}/operational-keys")

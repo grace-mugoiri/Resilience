@@ -86,3 +86,30 @@ class OperationalKeyOut(BaseModel):
     revoked_at: datetime | None
     authorization_event: dict
     revocation_event: dict | None
+
+
+class OrganizationAccessOut(BaseModel):
+    organization: OrgOut
+    actor: Literal["root", "operational"]
+    operational_key: OperationalKeyOut | None
+
+
+class EnrollmentCounts(BaseModel):
+    draft: int = 0
+    under_review: int = 0
+    more_information: int = 0
+    approved: int = 0
+    rejected: int = 0
+
+
+class CounsellorCounts(BaseModel):
+    verified: int = 0
+    expired: int = 0
+    removed: int = 0
+
+
+class OrganizationDashboardOut(BaseModel):
+    organization: OrgOut
+    active_invites: int
+    enrollments: EnrollmentCounts
+    counsellors: CounsellorCounts
