@@ -25,7 +25,9 @@ SCOPE_PATTERN = re.compile(
     r"|disbursement:(create|approve):[0-9a-f-]{36}"
     r"|group:(create|member):[0-9a-f-]{36}"
     r"|counselor:(invite|review):[0-9a-f-]{36}"
-    r"|counselor:credentials:[0-9a-f-]{36})$"
+    r"|counselor:credentials:[0-9a-f-]{36}"
+    r"|wallet:(connect|disconnect):[0-9a-f-]{36}"
+    r"|disbursement:(pay|reconcile):[0-9a-f-]{36})$"
 )
 
 

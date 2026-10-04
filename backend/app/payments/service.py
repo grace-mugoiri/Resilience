@@ -330,6 +330,19 @@ def submit_preimage(db: Session, item: Disbursement, actor: str, preimage: str) 
     return _transition(db, item, actor, "PAID", invoice=None, paid_at=datetime.now(UTC))
 
 
+def mark_failed(db: Session, item: Disbursement, actor: str) -> Disbursement:
+    """Record an explicit wallet failure.
+
+    Transport timeouts must not call this because their outcome is unknown.
+    """
+    require_payment_key(db, item, actor)
+    if item.state == "FAILED":
+        return item
+    if item.state != "PAYING":
+        raise DisbursementError(409, "only a payment in progress can be marked failed")
+    return _transition(db, item, actor, "FAILED", invoice=None)
+
+
 def cancel_disbursement(db: Session, item: Disbursement, actor: str) -> Disbursement:
     creator = actor == item.created_by_pubkey and is_active_counsellor(db, item.org_id, actor)
     if not creator and not is_payment_key(db, item.org_id, actor):

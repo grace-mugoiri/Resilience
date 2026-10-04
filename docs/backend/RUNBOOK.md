@@ -234,6 +234,15 @@ The authoritative request and response schemas are at `/docs` and `/openapi.json
 | GET | `/v1/disbursements/{id}` | NIP-98 authorized party | Read the record and approval state |
 | GET | `/v1/orgs/{org_id}/disbursements?state=` | Counselor (own) or `payments` key (all) | List requests |
 | PUT | `/v1/admin/orgs/{org_id}/disbursement-limits` | Admin challenge scope | Set per-payment and daily caps |
+| PUT | `/v1/orgs/{org_id}/wallet` | `payments` key + `wallet:connect` challenge | Connect and validate an NWC wallet |
+| GET | `/v1/orgs/{org_id}/wallet` | `payments` key | Read safe wallet metadata |
+| DELETE | `/v1/orgs/{org_id}/wallet` | `payments` key + `wallet:disconnect` challenge | Remove the encrypted NWC connection |
+| GET | `/v1/orgs/{org_id}/wallet/balance` | `payments` key | Read live NWC balance |
+| POST | `/v1/orgs/{org_id}/wallet/invoices` | `payments` key | Create an organization invoice |
+| POST | `/v1/disbursements/{id}/pay-with-wallet` | `payments` key + challenge | Pay once through NWC |
+| POST | `/v1/disbursements/{id}/reconcile-wallet` | `payments` key + challenge | Resolve an uncertain NWC outcome |
+| POST | `/v1/orgs/{org_id}/donations` | Public | Create an anonymous donation invoice |
+| GET | `/v1/donations/{id}` | Public opaque ID | Poll donation settlement |
 
 Sensitive scopes are:
 
@@ -248,6 +257,10 @@ disbursement:approve:<disbursement UUID>
 counselor:invite:<org UUID>
 counselor:credentials:<enrollment UUID>
 counselor:review:<org UUID>
+wallet:connect:<org UUID>
+wallet:disconnect:<org UUID>
+disbursement:pay:<disbursement UUID>
+disbursement:reconcile:<disbursement UUID>
 ```
 
 ### Organization key and roster commands

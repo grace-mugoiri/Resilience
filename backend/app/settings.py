@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     nip05_dev_base_url: str | None = None
     # BOLT11 network an attached invoice must be for: bc, tb, bcrt or tbs (signet).
     lightning_network: str = "tbs"
+    # Encrypts NWC client secrets before they enter PostgreSQL. Use a secret-manager value in prod.
+    nwc_storage_key: str = "dev-only-nwc-storage-key-change-me"
+    nwc_timeout_seconds: float = 12.0
+    # Optional Origin for outbound relay websocket handshakes. Leave empty unless a relay needs it.
+    nwc_relay_origin: str | None = None
+    nwc_user_agent: str = "Resilience/0.1 NWC"
+    donation_min_sat: int = 100
+    donation_max_sat: int = 10_000_000
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -79,7 +87,12 @@ class Settings(BaseSettings):
     def strip_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
-    @field_validator("relay_policy_hmac_key", "membership_box_key", "counselor_invite_hmac_key")
+    @field_validator(
+        "relay_policy_hmac_key",
+        "membership_box_key",
+        "counselor_invite_hmac_key",
+        "nwc_storage_key",
+    )
     @classmethod
     def strong_policy_key(cls, v: str, info) -> str:
         # Tests and local development deliberately use a documented throwaway value.
@@ -102,7 +115,27 @@ class Settings(BaseSettings):
             raise ValueError("LIGHTNING_NETWORK must be bc, tb, bcrt, or tbs")
         return value
 
-    @field_validator("platform_pubkey", "nip05_dev_base_url", "approved_orgs_list", mode="before")
+    @field_validator("nwc_timeout_seconds")
+    @classmethod
+    def valid_nwc_timeout(cls, value: float) -> float:
+        if not 2 <= value <= 60:
+            raise ValueError("NWC_TIMEOUT_SECONDS must be between 2 and 60")
+        return value
+
+    @field_validator("donation_min_sat", "donation_max_sat")
+    @classmethod
+    def valid_donation_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("donation limits must be positive")
+        return value
+
+    @field_validator(
+        "platform_pubkey",
+        "nip05_dev_base_url",
+        "approved_orgs_list",
+        "nwc_relay_origin",
+        mode="before",
+    )
     @classmethod
     def empty_is_none(cls, v: object) -> object:
         return v or None
