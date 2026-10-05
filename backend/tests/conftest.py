@@ -41,6 +41,7 @@ CLEAN_DIRECTORY = (
     "DELETE FROM authorization_challenges; DELETE FROM disbursement_approvals; "
     "DELETE FROM disbursement_transitions; "
     "DELETE FROM disbursements; "
+    "DELETE FROM donations; DELETE FROM organization_wallet_connections; "
     "DELETE FROM support_group_join_requests; DELETE FROM support_group_memberships; "
     "DELETE FROM support_groups; DELETE FROM circle_invites; DELETE FROM private_circle_members; "
     "DELETE FROM private_circles; DELETE FROM blocked_peers; DELETE FROM safety_reports; "

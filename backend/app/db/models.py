@@ -41,6 +41,7 @@ DISBURSEMENT_STATES = (
     "FAILED",
     "CANCELLED",
 )
+DONATION_STATES = ("PENDING", "PAID", "EXPIRED")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -93,6 +94,53 @@ class OrganizationOperationalKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revocation_event: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrganizationWalletConnection(Base):
+    """Metadata plus an encrypted NWC client secret. The plaintext URI is never persisted."""
+
+    __tablename__ = "organization_wallet_connections"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    wallet_pubkey: Mapped[str] = mapped_column(String(64))
+    client_pubkey: Mapped[str] = mapped_column(String(64), unique=True)
+    encrypted_client_secret: Mapped[str] = mapped_column(Text)
+    relay_urls: Mapped[list[str]] = mapped_column(JSONB)
+    lud16: Mapped[str | None] = mapped_column(Text)
+    methods: Mapped[list[str]] = mapped_column(JSONB)
+    network: Mapped[str | None] = mapped_column(String(20))
+    alias: Mapped[str | None] = mapped_column(Text)
+    connected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Donation(Base):
+    """Anonymous inbound Lightning invoice. No donor identity or contact data is collected."""
+
+    __tablename__ = "donations"
+    __table_args__ = (
+        CheckConstraint(_in("state", DONATION_STATES), name="ck_donation_state"),
+        CheckConstraint("amount_sat > 0", name="ck_donation_amount_positive"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    amount_sat: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(Text, default="PENDING", server_default="PENDING")
+    payment_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invoice: Mapped[str | None] = mapped_column(Text)
+    invoice_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CounsellorProfile(Base):

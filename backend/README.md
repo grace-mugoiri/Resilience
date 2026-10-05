@@ -290,9 +290,34 @@ An organisation can't pay anything until an admin sets its limits. The scope is
 `{"per_payment_cap_sat":50000,"daily_cap_sat":100000}`. The daily limit resets at midnight in
 Nairobi.
 
-After the second approval, the requesting counsellor attaches the survivor's invoice
-(`POST /v1/disbursements/{id}/invoice`), and the `payments` key holder marks it as paying
-(`/paying`), pays it from the organisation's wallet and submits the preimage (`/proof`).
+### Lightning wallets and donations
+
+Resilience connects to an **organization-controlled** Lightning wallet with a NIP-47/Nostr
+Wallet Connect URI. It does not create custodial wallets or take custody of funds. The URI must
+grant `get_info`, `get_balance`, `make_invoice`, `lookup_invoice`, and `pay_invoice`. Its client
+secret is encrypted before storage and is never returned by the API.
+
+Use a `payments` operational key and a one-use challenge to connect the wallet:
+
+```text
+PUT    /v1/orgs/{org_id}/wallet
+GET    /v1/orgs/{org_id}/wallet
+DELETE /v1/orgs/{org_id}/wallet
+GET    /v1/orgs/{org_id}/wallet/balance
+POST   /v1/orgs/{org_id}/wallet/invoices
+```
+
+The frontend lists approved organizations with `GET /v1/orgs`. A donor selects one and calls
+`POST /v1/orgs/{org_id}/donations` with `{"amount_sat":21000}`. This public endpoint creates a
+10-minute invoice directly in that organization's wallet without a donor account, name, or
+email. Poll `GET /v1/donations/{donation_id}` until it returns `PAID` or `EXPIRED`; invoice strings
+are removed from final records.
+
+For emergency disbursements, the requesting counsellor still attaches the survivor's invoice
+after the second approval. A `payments` key can use the manual `/paying` + `/proof` route or call
+`POST /v1/disbursements/{id}/pay-with-wallet` with a scoped challenge. If the wallet request times
+out, the payment stays `PAYING` and must be checked with
+`POST /v1/disbursements/{id}/reconcile-wallet`; it must never be sent again blindly.
 
 ### Counselor-directory privacy
 

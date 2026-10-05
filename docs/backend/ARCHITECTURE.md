@@ -192,10 +192,11 @@ approvals and the proof of payment. It never holds or transfers the money.
 4. The counsellor who made the request attaches it. Nobody else can, so nobody else can redirect
    the money. The API checks the signature, network, exact amount, expiry and first use.
    State `INVOICE_ATTACHED`.
-5. The `payments` key holder marks it `PAYING` and pays from the organisation's own wallet.
-6. The wallet returns the **preimage**, which the payer only gets once the money has arrived.
-   The `payments` key holder submits it and the API checks `sha256(preimage) == payment_hash`.
-   State `PAID`.
+5. The `payments` key holder either uses the manual `PAYING`/proof flow or authorizes a NIP-47
+   payment from the organisation's connected wallet.
+6. The wallet returns the **preimage**, which the API checks with
+   `sha256(preimage) == payment_hash`. State `PAID`. A transport timeout remains `PAYING` until a
+   separate NIP-47 `lookup_invoice` reconciliation proves the outcome.
 
 ```
 CREATED ──2nd approval, invoice──► INVOICE_ATTACHED ──pay──► PAYING ──valid preimage──► PAID
@@ -220,9 +221,10 @@ Rules that stop paying twice:
 - Once final, the invoice string is deleted; only hash, amount and timestamps stay. The
   survivor's pubkey is never stored on a disbursement.
 
-A test-only `POST /v1/_mock/settle/{id}` (only when `APP_ENV=test`) stands in for the wallet. The
-server has no wallet at all. No M-Pesa (Daraja) payouts to survivors: they show on her M-Pesa
-statement.
+A test-only `POST /v1/_mock/settle/{id}` (only when `APP_ENV=test`) remains available for isolated
+tests. In normal deployments, organizations connect their own wallet with NIP-47. Resilience
+stores only the encrypted client capability and never holds the wallet seed or funds. No M-Pesa
+(Daraja) payout integration is included.
 
 ### 5.5 Endpoints
 
@@ -244,6 +246,9 @@ statement.
 | `POST /v1/disbursements/{id}/paying` \| `/proof` | NIP-98, `payments` key | built |
 | `POST /v1/disbursements/{id}/cancel` | NIP-98, requesting counsellor or `payments` key | built |
 | `GET /v1/disbursements/{id}`, `GET /v1/orgs/{id}/disbursements?state=` | NIP-98; a counsellor sees her own, the `payments` key all | built |
+| `PUT/GET/DELETE /v1/orgs/{id}/wallet`, `GET /balance`, `POST /invoices` | NIP-98, `payments` key; connect/disconnect also challenge-bound | built |
+| `POST /v1/disbursements/{id}/pay-with-wallet`, `/reconcile-wallet` | NIP-98 + challenge, `payments` key | built |
+| `POST /v1/orgs/{id}/donations`, `GET /v1/donations/{id}` | none; opaque donation ID | built |
 
 ## 6. The relay
 

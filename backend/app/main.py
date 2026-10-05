@@ -7,10 +7,12 @@ from app.routers import (
     config,
     counselor_enrollment,
     disbursements,
+    donations,
     groups,
     health,
     messaging,
     orgs,
+    wallets,
     whoami,
 )
 from app.settings import get_settings
@@ -36,6 +38,8 @@ def create_app() -> FastAPI:
     app.include_router(groups.member_router)
     app.include_router(messaging.router)
     app.include_router(disbursements.router)
+    app.include_router(donations.router)
+    app.include_router(wallets.router)
     app.include_router(admin.router)
     if settings.app_env == "test":
         from app.routers import mock_payments

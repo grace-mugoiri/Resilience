@@ -11,3 +11,4 @@ httpx==0.28.1
 bolt11==2.2.0
 grpcio==1.75.1
 protobuf==6.33.0
+websockets==15.0.1
