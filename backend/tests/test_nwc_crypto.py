@@ -101,3 +101,14 @@ def test_production_nwc_uri_requires_tls_relay():
     uri = f"nostr+walletconnect://{pubkey_of(BOB)}?relay=ws://wallet.example&secret={ALICE}"
     with pytest.raises(NwcConnectionError, match="not allowed"):
         parse_connection_uri(uri, settings)
+
+
+def test_nip04_iv_with_plus_and_slash_decrypts():
+    from app.nostr.events import pubkey_of
+    from app.nwc.crypto import nip04_decrypt, nip04_encrypt
+
+    wallet, client = "33" * 32, "11" * 32
+    iv = bytes.fromhex("fbefbefbefbefbefbefbefbefbefbeff")  # base64 is all "+" and "/"
+    payload = nip04_encrypt("pay me", client, pubkey_of(wallet), iv=iv)
+    assert "+" in payload.split("?iv=")[1]
+    assert nip04_decrypt(payload, wallet, pubkey_of(client)) == "pay me"

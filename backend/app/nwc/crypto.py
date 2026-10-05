@@ -10,7 +10,6 @@ import hmac
 import math
 import os
 import struct
-from urllib.parse import parse_qs
 
 from coincurve import PublicKey
 from cryptography.hazmat.primitives import padding
@@ -79,12 +78,13 @@ def nip04_decrypt(payload: str, secret_hex: str, peer_pubkey: str) -> str:
     if not isinstance(payload, str) or len(payload) > 100_000:
         raise Nip04Error("invalid NIP-04 payload size")
     try:
-        encoded, query = payload.split("?", 1)
-        iv_values = parse_qs(query, strict_parsing=True).get("iv", [])
-        if len(iv_values) != 1:
+        # Not parse_qs: it is a URL decoder and turns every "+" of the base64 IV into a space,
+        # which broke about 3 in 10 wallet replies.
+        encoded, separator, iv_encoded = payload.partition("?iv=")
+        if not separator:
             raise ValueError
         ciphertext = base64.b64decode(encoded, validate=True)
-        iv = base64.b64decode(iv_values[0], validate=True)
+        iv = base64.b64decode(iv_encoded, validate=True)
         if not ciphertext or len(ciphertext) % 16 or len(iv) != 16:
             raise ValueError
         cipher = Cipher(

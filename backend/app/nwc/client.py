@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import websockets
+from websockets.exceptions import InvalidStatus
 
 from app.nostr.events import first_tag, sign_event, verify_event
 from app.nwc.crypto import (
@@ -41,6 +42,12 @@ class NwcCredentials:
     relays: list[str]
 
 
+# Busy public relays (relay.damus.io in particular) refuse a burst of connections from one IP with
+# HTTP 503 or 429. One short retry gets through most of the time.
+RETRYABLE_STATUS = frozenset({429, 502, 503})
+OPEN_RETRY_DELAY_SECONDS = 1.5
+
+
 class NwcClient:
     def __init__(
         self,
@@ -67,10 +74,58 @@ class NwcClient:
             ping_interval=20,
         )
 
+    async def _open(self, relay: str):
+        """Opens one websocket, retrying once when the relay is shedding load."""
+        for attempt in range(2):
+            try:
+                async with asyncio.timeout(self.timeout_seconds):
+                    return await self._connect(relay)
+            except InvalidStatus as exc:
+                if attempt or exc.response.status_code not in RETRYABLE_STATUS:
+                    raise
+            await asyncio.sleep(OPEN_RETRY_DELAY_SECONDS)
+        raise AssertionError("unreachable")
+
+    async def _open_all(self, relays: list[str]) -> tuple[dict[str, Any], list[str]]:
+        opened = await asyncio.gather(
+            *(self._open(relay) for relay in relays), return_exceptions=True
+        )
+        sockets: dict[str, Any] = {}
+        errors: list[str] = []
+        for relay, value in zip(relays, opened, strict=True):
+            if isinstance(value, BaseException):
+                errors.append(f"could not connect to {relay}: {value or type(value).__name__}")
+            else:
+                sockets[relay] = value
+        return sockets, errors
+
     async def request(
         self, credentials: NwcCredentials, method: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        encryption = await self._negotiate_encryption(credentials)
+        # One connection per relay for the whole request. Reading the wallet's info event on one
+        # connection and then opening a second one for the request made relay.damus.io refuse or
+        # ignore the second connection, so the request timed out even though the wallet was online.
+        sockets, errors = await self._open_all(credentials.relays)
+        try:
+            if not sockets:
+                raise NwcTransportError(
+                    "NWC request failed across all relays: " + "; ".join(errors)
+                )
+            return await self._request_on(sockets, credentials, method, params, errors)
+        finally:
+            await asyncio.gather(
+                *(socket.close() for socket in sockets.values()), return_exceptions=True
+            )
+
+    async def _request_on(
+        self,
+        sockets: dict[str, Any],
+        credentials: NwcCredentials,
+        method: str,
+        params: dict[str, Any] | None,
+        errors: list[str],
+    ) -> dict[str, Any]:
+        encryption = await self._negotiate_encryption(credentials, sockets)
         now = int(time.time())
         content = json.dumps(
             {"method": method, "params": params or {}}, separators=(",", ":"), sort_keys=True
@@ -83,7 +138,9 @@ class NwcClient:
         tags = [["p", credentials.wallet_pubkey]]
         if encryption == "nip44_v2":
             tags.append(["encryption", encryption])
-        tags.append(["expiration", str(now + max(15, int(self.timeout_seconds) + 5))])
+        # No NIP-40 "expiration" tag. It is optional in NIP-47, and at least one wallet in use
+        # (the demo connection on relay.damus.io) silently ignores any request that carries one,
+        # so every call timed out. The relay subscription below already bounds the wait.
         event = sign_event(
             credentials.client_secret,
             23194,
@@ -93,11 +150,10 @@ class NwcClient:
         )
         tasks = [
             asyncio.create_task(
-                self._relay_roundtrip(relay, credentials, event, method, encryption)
+                self._relay_roundtrip(relay, socket, credentials, event, method, encryption)
             )
-            for relay in credentials.relays
+            for relay, socket in sockets.items()
         ]
-        errors: list[str] = []
         try:
             for completed in asyncio.as_completed(tasks, timeout=self.timeout_seconds + 2):
                 try:
@@ -114,12 +170,16 @@ class NwcClient:
                     task.cancel()
         raise NwcTransportError("NWC request failed across all relays: " + "; ".join(errors))
 
-    async def _negotiate_encryption(self, credentials: NwcCredentials) -> str:
+    async def _negotiate_encryption(
+        self, credentials: NwcCredentials, sockets: dict[str, Any] | None = None
+    ) -> str:
         """Read kind 13194 before requesting, defaulting to legacy NIP-04 when absent."""
-        discovered = await asyncio.gather(
-            *(self._relay_info(relay, credentials) for relay in credentials.relays),
-            return_exceptions=True,
+        lookups = (
+            [self._relay_info(relay, credentials) for relay in credentials.relays]
+            if sockets is None
+            else [self._relay_info(relay, credentials, socket) for relay, socket in sockets.items()]
         )
+        discovered = await asyncio.gather(*lookups, return_exceptions=True)
         modes: set[str] = set()
         found_info = False
         for value in discovered:
@@ -139,7 +199,12 @@ class NwcClient:
             "wallet info event does not advertise a supported encryption method"
         )
 
-    async def _relay_info(self, relay: str, credentials: NwcCredentials) -> dict[str, Any] | None:
+    async def _relay_info(
+        self, relay: str, credentials: NwcCredentials, socket: Any = None
+    ) -> dict[str, Any] | None:
+        if socket is None:
+            async with self._connect(relay) as owned:
+                return await self._relay_info(relay, credentials, owned)
         subscription = f"nwc-info-{uuid.uuid4().hex}"
         event_filter = {
             "kinds": [13194],
@@ -148,48 +213,47 @@ class NwcClient:
         }
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async with self._connect(relay) as socket:
-                    await socket.send(json.dumps(["REQ", subscription, event_filter]))
-                    auth_event_id: str | None = None
-                    async for raw in socket:
-                        try:
-                            message = json.loads(raw)
-                        except (TypeError, json.JSONDecodeError):
-                            continue
-                        if not isinstance(message, list) or not message:
-                            continue
-                        if message[0] == "AUTH" and len(message) == 2:
-                            auth = sign_event(
-                                credentials.client_secret,
-                                22242,
-                                [["relay", relay], ["challenge", str(message[1])]],
-                                "",
-                            )
-                            auth_event_id = auth["id"]
-                            await socket.send(json.dumps(["AUTH", auth]))
-                            continue
-                        if (
-                            message[0] == "OK"
-                            and len(message) >= 3
-                            and message[1] == auth_event_id
-                            and message[2] is True
-                        ):
-                            await socket.send(json.dumps(["REQ", subscription, event_filter]))
-                            continue
-                        if message[0] == "EOSE" and message[1:2] == [subscription]:
-                            return None
-                        if message[0] != "EVENT" or len(message) != 3:
-                            continue
-                        if message[1] != subscription:
-                            continue
-                        info = message[2]
-                        if (
-                            verify_event(info)
-                            and info["kind"] == 13194
-                            and info["pubkey"] == credentials.wallet_pubkey
-                        ):
-                            await socket.send(json.dumps(["CLOSE", subscription]))
-                            return info
+                await socket.send(json.dumps(["REQ", subscription, event_filter]))
+                auth_event_id: str | None = None
+                async for raw in socket:
+                    try:
+                        message = json.loads(raw)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(message, list) or not message:
+                        continue
+                    if message[0] == "AUTH" and len(message) == 2:
+                        auth = sign_event(
+                            credentials.client_secret,
+                            22242,
+                            [["relay", relay], ["challenge", str(message[1])]],
+                            "",
+                        )
+                        auth_event_id = auth["id"]
+                        await socket.send(json.dumps(["AUTH", auth]))
+                        continue
+                    if (
+                        message[0] == "OK"
+                        and len(message) >= 3
+                        and message[1] == auth_event_id
+                        and message[2] is True
+                    ):
+                        await socket.send(json.dumps(["REQ", subscription, event_filter]))
+                        continue
+                    if message[0] == "EOSE" and message[1:2] == [subscription]:
+                        return None
+                    if message[0] != "EVENT" or len(message) != 3:
+                        continue
+                    if message[1] != subscription:
+                        continue
+                    info = message[2]
+                    if (
+                        verify_event(info)
+                        and info["kind"] == 13194
+                        and info["pubkey"] == credentials.wallet_pubkey
+                    ):
+                        await socket.send(json.dumps(["CLOSE", subscription]))
+                        return info
         except TimeoutError:
             return None
         return None
@@ -197,6 +261,7 @@ class NwcClient:
     async def _relay_roundtrip(
         self,
         relay: str,
+        socket: Any,
         credentials: NwcCredentials,
         event: dict,
         method: str,
@@ -213,82 +278,81 @@ class NwcClient:
         }
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async with self._connect(relay) as socket:
-                    await socket.send(json.dumps(["REQ", subscription, event_filter]))
-                    await socket.send(json.dumps(["EVENT", event]))
-                    auth_event_id: str | None = None
-                    async for raw in socket:
-                        try:
-                            message = json.loads(raw)
-                        except (TypeError, json.JSONDecodeError):
-                            continue
-                        if not isinstance(message, list) or not message:
-                            continue
-                        if message[0] == "AUTH" and len(message) == 2:
-                            auth = sign_event(
+                await socket.send(json.dumps(["REQ", subscription, event_filter]))
+                await socket.send(json.dumps(["EVENT", event]))
+                auth_event_id: str | None = None
+                async for raw in socket:
+                    try:
+                        message = json.loads(raw)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(message, list) or not message:
+                        continue
+                    if message[0] == "AUTH" and len(message) == 2:
+                        auth = sign_event(
+                            credentials.client_secret,
+                            22242,
+                            [["relay", relay], ["challenge", str(message[1])]],
+                            "",
+                        )
+                        auth_event_id = auth["id"]
+                        await socket.send(json.dumps(["AUTH", auth]))
+                        continue
+                    if message[0] == "OK" and len(message) >= 3:
+                        if message[1] == auth_event_id and message[2] is True:
+                            await socket.send(json.dumps(["REQ", subscription, event_filter]))
+                            await socket.send(json.dumps(["EVENT", event]))
+                        elif message[1] == event["id"] and message[2] is False:
+                            detail = message[3] if len(message) > 3 else "no reason supplied"
+                            raise NwcTransportError(
+                                f"relay rejected NWC request on {relay}: {detail}"
+                            )
+                        continue
+                    if message[0] != "EVENT" or len(message) != 3 or message[1] != subscription:
+                        continue
+                    response = message[2]
+                    if (
+                        not verify_event(response)
+                        or response["kind"] != 23195
+                        or response["pubkey"] != credentials.wallet_pubkey
+                        or first_tag(response, "p") != event["pubkey"]
+                        or first_tag(response, "e") != event["id"]
+                    ):
+                        continue
+                    try:
+                        plaintext = (
+                            decrypt(
+                                response["content"],
                                 credentials.client_secret,
-                                22242,
-                                [["relay", relay], ["challenge", str(message[1])]],
-                                "",
+                                credentials.wallet_pubkey,
                             )
-                            auth_event_id = auth["id"]
-                            await socket.send(json.dumps(["AUTH", auth]))
-                            continue
-                        if message[0] == "OK" and len(message) >= 3:
-                            if message[1] == auth_event_id and message[2] is True:
-                                await socket.send(json.dumps(["REQ", subscription, event_filter]))
-                                await socket.send(json.dumps(["EVENT", event]))
-                            elif message[1] == event["id"] and message[2] is False:
-                                detail = message[3] if len(message) > 3 else "no reason supplied"
-                                raise NwcTransportError(
-                                    f"relay rejected NWC request on {relay}: {detail}"
-                                )
-                            continue
-                        if message[0] != "EVENT" or len(message) != 3 or message[1] != subscription:
-                            continue
-                        response = message[2]
-                        if (
-                            not verify_event(response)
-                            or response["kind"] != 23195
-                            or response["pubkey"] != credentials.wallet_pubkey
-                            or first_tag(response, "p") != event["pubkey"]
-                            or first_tag(response, "e") != event["id"]
-                        ):
-                            continue
-                        try:
-                            plaintext = (
-                                decrypt(
-                                    response["content"],
-                                    credentials.client_secret,
-                                    credentials.wallet_pubkey,
-                                )
-                                if encryption == "nip44_v2"
-                                else nip04_decrypt(
-                                    response["content"],
-                                    credentials.client_secret,
-                                    credentials.wallet_pubkey,
-                                )
+                            if encryption == "nip44_v2"
+                            else nip04_decrypt(
+                                response["content"],
+                                credentials.client_secret,
+                                credentials.wallet_pubkey,
                             )
-                            payload = json.loads(plaintext)
-                        except (Nip04Error, Nip44Error, json.JSONDecodeError) as exc:
-                            raise NwcTransportError(
-                                f"wallet response from {relay} could not be decrypted"
-                            ) from exc
-                        if not isinstance(payload, dict) or payload.get("result_type") != method:
-                            raise NwcTransportError(
-                                f"wallet response type from {relay} does not match request"
-                            )
-                        error = payload.get("error")
-                        if error:
-                            raise NwcRemoteError(
-                                str(error.get("code", "OTHER")),
-                                str(error.get("message", "wallet request failed")),
-                            )
-                        result = payload.get("result")
-                        if not isinstance(result, dict):
-                            raise NwcTransportError(f"wallet response from {relay} has no result")
-                        await socket.send(json.dumps(["CLOSE", subscription]))
-                        return result
+                        )
+                        payload = json.loads(plaintext)
+                    except (Nip04Error, Nip44Error, json.JSONDecodeError) as exc:
+                        raise NwcTransportError(
+                            f"wallet response from {relay} could not be decrypted"
+                        ) from exc
+                    if not isinstance(payload, dict) or payload.get("result_type") != method:
+                        raise NwcTransportError(
+                            f"wallet response type from {relay} does not match request"
+                        )
+                    error = payload.get("error")
+                    if error:
+                        raise NwcRemoteError(
+                            str(error.get("code", "OTHER")),
+                            str(error.get("message", "wallet request failed")),
+                        )
+                    result = payload.get("result")
+                    if not isinstance(result, dict):
+                        raise NwcTransportError(f"wallet response from {relay} has no result")
+                    await socket.send(json.dumps(["CLOSE", subscription]))
+                    return result
         except TimeoutError as exc:
             raise NwcTransportError(f"NWC response timed out on {relay}") from exc
         raise NwcTransportError(f"NWC connection closed without a response on {relay}")
